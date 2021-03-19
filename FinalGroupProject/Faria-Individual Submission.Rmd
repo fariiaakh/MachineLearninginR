@@ -1,0 +1,855 @@
+---
+title: "Faria Individual Submission"
+author: "Faria"
+date: "12/9/2020"
+output: html_document
+---
+```{r}
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(rcompanion)
+library(MASS)# stepwise regression
+library(randomForest) 
+library(leaps) # all subsets regression
+library(corrplot)
+library(caret)
+library(FNN)
+library(mlbench)
+library(lattice)
+library(class)
+library(gmodels)
+library(mice)
+```
+# Question 2 part 1 Data cleaning and Models
+```{r, Weeklypharmasalesdatacleaning}
+#run this
+# Pharma sales dataset
+#do linear regression to check of correlation for between and within years
+weeklypharma<-read.csv("salesweekly.csv")
+colnames(weeklypharma)
+colnames(weeklypharma)<-c("Date","Med4RheumArth","Med4OstArth","Aspirin","Ibuprofen",
+                          "Med4Tension","Med4Sleep","Med4Asthma","Med4Allergy")
+str(weeklypharma)
+#convert to date time object
+weeklypharma$Date<-mdy(weeklypharma$Date)
+
+#Obama year sales
+pharma201415<-weeklypharma
+pharma201415 <- 
+  pharma201415 %>% 
+  filter(between(Date,as.Date("2014-01-01"), as.Date("2015-12-31"))) 
+
+#Trump year sales
+pharma201718<-weeklypharma
+pharma201718 <- 
+  pharma201718 %>% 
+  filter(between(Date,as.Date("2017-01-01"), as.Date("2018-12-31")))
+
+#election year sales
+pharma2016<-weeklypharma
+pharma2016 <- 
+  pharma2016 %>% 
+  filter(between(Date,as.Date("2016-01-01"), as.Date("2016-12-31")))
+```
+
+```{r obama data exploration and transformation for linear reg}
+# first, load cleaned datasets from FinalProjectDataCleaning
+obamapharma<-pharma201415[,-1]
+correlationMatrix <- cor(obamapharma, method = "pearson")
+correlationMatrix
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corrplot(correlationMatrix, method="color", col=col(200),type="upper", order="hclust")
+# MEdicine are not highly correlated (all meds were 0.4 or under) with each other therefore each no med was dropped. 
+colnames(pharma201415)
+str(pharma201415)
+library(e1071)                    # load e1071 
+skewness(pharma201415$Med4Sleep)
+#plotNormalHistogram(pharma201415$Meds4Allergy)
+#no missing values in the phamadata
+#med4rheumarth skewness is 0.1803
+#med4ostarth skew is -0.025
+#med4sleep skew is 0.897, rskew
+#med4asthma skew is 0.97, r skew
+#med4allergy skew is 0.9579, rskew
+#med4tension is 0.793, rskew
+#ibuprofen is 0.79731, rskew
+#aspirin is 0.5888, right skewed
+#6/8 variables are right skewed, log transformation is done
+#("Date","Med4RheumArth","Med4OstArth"," Aspirin","Ibuprofen"," Med4Tension","Med4Sleep","Meds4Asthma","Meds4Allergy")
+
+#log transformations required, add small coefficient (0.5) to prevent log of 0
+#do them individually so that the dataframe isnt spliced
+dolog<-function(x){
+  log(x+1)
+}
+t201415<-pharma201415
+t201415[2:9]<-lapply(t201415[2:9],dolog)#logtransformed
+
+```
+
+
+# Stepwise Feature Selection
+Since none of them were correlated, hard to know which features are best predictors of independent variables
+```{r feature selection for rheumatoid arthritis meds}
+fullobamarh <- lm(Med4RheumArth~., data= t201415)  ## . means all the IVs
+nullobamarh <- lm(Med4RheumArth~1,data=t201415)
+stepobamarh <- stepAIC(nullobamarh, scope=list(lower=nullobamarh, upper=fullobamarh), direction= "both", trace=FALSE)
+summary(stepobamarh) 
+```
+
+```{r feature selection for osteo arthritis meds}
+fullobamaost <- lm(Med4OstArth~., data= t201415)  ## . means all the IVs
+nullobamaost <- lm(Med4OstArth~1,data=t201415)
+stepobamaost <- stepAIC(nullobamaost, scope=list(lower=nullobamaost, upper=fullobamaost), direction= "both", trace=FALSE)
+summary(stepobamaost) 
+
+```
+
+```{r feature selection for aspirin}
+fullobamaasp <- lm(Aspirin~., data= t201415)  ## . means all the IVs
+nullobamaasp <- lm(Aspirin~1,data=t201415)
+stepobamaasp <- stepAIC(nullobamaasp, scope=list(lower=nullobamaasp, upper=fullobamaasp), direction= "both", trace=FALSE)
+summary(stepobamaasp) 
+```
+
+```{r feature selection for ibuprofen}
+fullobamaib <- lm(Ibuprofen~., data= t201415)  ## . means all the IVs
+nullobamaib <- lm(Ibuprofen~1,data=t201415)
+stepobamaib <- stepAIC(nullobamaib, scope=list(lower=nullobamaib, upper=fullobamaib), direction= "both", trace=FALSE)
+summary(stepobamaib) 
+
+```
+
+```{r feature selection for tension medicine}
+fullobamaten <- lm(Med4Tension~., data= t201415)  ## . means all the IVs
+nullobamaten <- lm(Med4Tension~1,data=t201415)
+stepobamaten <- stepAIC(nullobamaten, scope=list(lower=nullobamaten, upper=fullobamaten), direction= "both", trace=FALSE)
+summary(stepobamaten) 
+```
+
+```{r feature selection for sleep medicine}
+fullobamaslp <- lm(Med4Sleep~., data= t201415)  ## . means all the IVs
+nullobamaslp <- lm(Med4Sleep~1,data=t201415)
+stepobamaslp <- stepAIC(nullobamaslp, scope=list(lower=nullobamaslp, upper=fullobamaslp), direction= "both", trace=FALSE)
+summary(stepobamaslp) 
+```
+
+```{r feature selection for asthma medicine}
+fullobamaast <- lm(Med4Asthma~., data= t201415)  ## . means all the IVs
+nullobamaast <- lm(Med4Asthma~1,data=t201415)
+stepobamaast <- stepAIC(nullobamaast, scope=list(lower=nullobamaast, upper=fullobamaast), direction= "both", trace=FALSE)
+summary(stepobamaast) 
+```
+
+```{r feature selection for allergy medicine}
+fullobamaall <- lm(Med4Allergy~., data= t201415)  ## . means all the IVs
+nullobamaall <- lm(Med4Allergy~1,data=t201415)
+stepobamaall <- stepAIC(nullobamaall, scope=list(lower=nullobamaall, upper=fullobamaall), direction= "both", trace=FALSE)
+summary(stepobamaall) 
+```
+
+# Trump Data
+```{r trump data exploration and transformation for linear reg}
+trumppharma<-pharma201718[,-1]
+correlationMatrix <- cor(trumppharma, method = "pearson")
+correlationMatrix
+#the correlations are not strong but are higher than obama period
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corrplot(correlationMatrix, method="color", col=col(200),type="upper", order="hclust")
+# MEdicine are not highly correlated (all meds were 0.4 or under) with each other therefore each no med was dropped. 
+colnames(pharma201718)
+str(pharma201718)
+library(e1071)                    # load e1071 
+#skewness(pharma201718$Aspirin)
+#plotNormalHistogram(pharma201415$Aspirin)
+
+#no missing values in the phamadata
+#med4rheumarth skewness is 0.537, range (3.012-4.04)
+#med4ostarth skew is 0.39, range(2.763674 3.798137)
+#med4sleep skew is 1.4, rskew range(0.000000 2.89037)
+#med4asthma skew is 0.699, r skew range(1.609438 4.762174)
+#med4allergy skew is 1.15, rskew range(1.609438 4.189655)
+#med4tension is 1,17, rskew range(2.944439 4.795791)
+#ibuprofen is 1.10, rskew range(4.541698 6.306091)
+#aspirin is 1.29 , right skewed range(2.411439 4.112921)
+
+#7/8 variables are right skewed, log transformation is done
+#("Date","Med4RheumArth","Med4OstArth"," Aspirin","Ibuprofen"," Med4Tension","Med4Sleep","Meds4Asthma","Meds4Allergy")
+
+#log transformations required, add small coefficient (0.5) to prevent log of 0
+#do them individually so that the dataframe isnt spliced
+dolog<-function(x){
+  log(x+1)
+}
+t201718<-pharma201718
+t201718[2:9]<-lapply(t201718[2:9],dolog)#logtransformed
+range(t201718$Aspirin)
+
+```
+
+# Trump Stepwise Feature Selection
+Since none of them were correlated, hard to know which features are best predictors of independent variables
+```{r feature selection for rheumatoid arthritis meds}
+fulltrumprh <- lm(Med4RheumArth~., data= t201718)  ## . means all the IVs
+nulltrumprh <- lm(Med4RheumArth~1,data=t201718)
+steptrumprh <- stepAIC(nulltrumprh, scope=list(lower=nulltrumprh, upper=fulltrumprh), direction= "both", trace=FALSE)
+summary(steptrumprh) 
+```
+
+```{r feature selection for osteo arthritis meds}
+fulltrumpost <- lm(Med4OstArth~., data= t201718)  ## . means all the IVs
+nulltrumpost <- lm(Med4OstArth~1,data=t201718)
+steptrumpost <- stepAIC(nulltrumpost, scope=list(lower=nulltrumpost, upper=fulltrumpost), direction= "both", trace=FALSE)
+summary(steptrumpost) 
+
+```
+
+```{r feature selection for aspirin}
+fulltrumpasp <- lm(Aspirin~., data= t201718)  ## . means all the IVs
+nulltrumpasp <- lm(Aspirin~1,data=t201718)
+steptrumpasp <- stepAIC(nulltrumpasp, scope=list(lower=nulltrumpasp, upper=fulltrumpasp), direction= "both", trace=FALSE)
+summary(steptrumpasp) 
+```
+
+```{r feature selection for ibuprofen}
+fulltrumpib <- lm(Ibuprofen~., data= t201718)  ## . means all the IVs
+nulltrumpib <- lm(Ibuprofen~1,data=t201718)
+steptrumpib <- stepAIC(nulltrumpib, scope=list(lower=nulltrumpib, upper=fulltrumpib), direction= "both", trace=FALSE)
+summary(steptrumpib) 
+
+```
+
+```{r feature selection for tension medicine}
+fulltrumpten <- lm(Med4Tension~., data= t201718)  ## . means all the IVs
+nulltrumpten <- lm(Med4Tension~1,data=t201718)
+steptrumpten <- stepAIC(nullobamaten, scope=list(lower=nulltrumpten, upper=fulltrumpten), direction= "both", trace=FALSE)
+summary(steptrumpten) 
+```
+
+```{r feature selection for sleep medicine}
+fulltrumpslp <- lm(Med4Sleep~., data= t201718)  ## . means all the IVs
+nulltrumpslp <- lm(Med4Sleep~1,data=t201718)
+steptrumpslp <- stepAIC(nulltrumpslp, scope=list(lower=nulltrumpslp, upper=fulltrumpslp), direction= "both", trace=FALSE)
+summary(steptrumpslp) 
+```
+
+```{r feature selection for asthma medicine}
+fulltrumpast <- lm(Med4Asthma~., data= t201718)  ## . means all the IVs
+nulltrumpast <- lm(Med4Asthma~1,data=t201718)
+steptrumpast <- stepAIC(nulltrumpast, scope=list(lower=nulltrumpast, upper=fulltrumpast), direction= "both", trace=FALSE)
+summary(steptrumpast) 
+```
+
+```{r feature selection for allergy medicine}
+fulltrumpall <- lm(Med4Allergy~., data= t201718)  ## . means all the IVs
+nulltrumpall <- lm(Med4Allergy~1,data=t201718)
+steptrumpall <- stepAIC(nulltrumpall, scope=list(lower=nulltrumpall, upper=fulltrumpall), direction= "both", trace=FALSE)
+summary(steptrumpall) 
+```
+
+
+NOTES: stepwise regression was done for weekly on the time periods 201415 and 201718. for the 201415 period, 5/8 meds had date as significant but only 1/8 meds had date as signifcant. 
+
+
+# Training and testing 2014-2015 models to make sure model gives back good metrics before testing on other data
+
+```{r traintest split }
+#linear reg train test split
+set.seed(111)
+rn_train <- sample(nrow(t201415), floor(nrow(t201415)*0.7))
+obamatrain70<-t201415[rn_train,]
+obamatest<-t201415[-rn_train,]
+
+
+```
+
+Using Linear Regression to train 70% 201415 data and test 30% on 20142015
+rheumArth, Aspirin,Ibuprofen,Sleep Med and Allergy Med had date be a significant feature so only those 5 meds were used for training and test.
+
+```{r linear model for rheum arthritis}
+ObamaRheumModel<-lm(Med4RheumArth~Date, data=obamatrain70) 
+ObamaRheumPrediction <- predict(ObamaRheumModel, newdata =obamatest) 
+ObamaRheumErrors <- ObamaRheumPrediction - obamatest$Med4RheumArth
+hist(ObamaRheumErrors)
+ObamaRheumRmse <- sqrt(mean((obamatest$Med4RheumArth - ObamaRheumPrediction)^2))
+ObamaRheumRel_change <- abs(ObamaRheumErrors) / obamatest$Med4RheumArth
+ObamaRheumPred10 <- table(ObamaRheumRel_change<0.10)["TRUE"] / nrow(obamatest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+ObamaRheumPred25 <- table(ObamaRheumRel_change<0.25)["TRUE"] / nrow(obamatest)
+
+paste("2014-2015 model for Rheumatoid Arthritis Meds")
+paste("RMSE:", ObamaRheumRmse)
+paste("PRED(10):", round(ObamaRheumPred10,2))
+paste("PRED(25):", round(ObamaRheumPred25,2))
+paste("Summary of Prediction")
+summary(ObamaRheumPrediction)
+
+
+#88%of values are within 10% of the actual values, 100% of values are within 25% of actualvalues and there is a very low RMSE(0.178) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for Aspirin}
+ObamaAspModel<-lm(Aspirin~Date, data=obamatrain70) 
+ObamaAspPrediction <- predict(ObamaAspModel, newdata =obamatest) 
+ObamaAspErrors <- ObamaAspPrediction - obamatest$Aspirin
+hist(ObamaAspErrors)
+ObamaAspRmse <- sqrt(mean((obamatest$Aspirin - ObamaAspPrediction)^2))
+ObamaAspRel_change <- abs(ObamaAspErrors) / obamatest$Aspirin
+
+ObamaAspPred10 <- table(ObamaAspRel_change<0.10)["TRUE"] / nrow(obamatest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+ObamaAspPred25 <- table(ObamaAspRel_change<0.25)["TRUE"] / nrow(obamatest)
+
+paste("2014-2015 model for Aspirin")
+paste("RMSE:", ObamaAspRmse)
+paste("PRED(10):", round(ObamaAspPred10,2))
+paste("PRED(25):", round(ObamaAspPred25,2))
+paste("Summary of Prediction")
+summary(ObamaAspPrediction)
+
+#within 201415
+#88% of values are within 10% of the actual values and 100% of values are within 25% of actual values there is a very low RMSE(0.243) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for Ibuprofen}
+
+ObamaIbModel<-lm(Ibuprofen~Date, data=obamatrain70) 
+ObamaIbPrediction <- predict(ObamaIbModel, newdata =obamatest) 
+ObamaIbErrors <- ObamaIbPrediction - obamatest$Ibuprofen
+hist(ObamaIbErrors)
+ObamaIbRmse <- sqrt(mean((obamatest$Ibuprofen - ObamaIbPrediction)^2))
+ObamaIbRel_change <- abs(ObamaIbErrors) / obamatest$Ibuprofen
+ObamaIbPred10 <- table(ObamaIbRel_change<0.10)["TRUE"] / nrow(obamatest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+ObamaIbPred25 <- table(ObamaIbRel_change<0.25)["TRUE"] / nrow(obamatest)
+
+paste("2014-2015 model for Ibuprofen")
+paste("RMSE:", ObamaIbRmse)
+paste("PRED(10):", round(ObamaIbPred10,2))
+paste("PRED(25):", round(ObamaIbPred25,2))
+paste("Summary of Prediction")
+summary(ObamaIbPrediction)
+#within201415
+
+#88%of values are within 10% of the actual values and 100% of values fall within 25% of actual values (match 100%) and there is a very low RMSE(0.283) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for sleep med}
+ObamaSlpModel<-lm(Med4Sleep~Date, data=obamatrain70) 
+ObamaSlpPrediction <- predict(ObamaSlpModel, newdata =obamatest) 
+ObamaSlpErrors <- ObamaSlpPrediction - obamatest$Med4Sleep
+hist(ObamaSlpErrors)
+ObamaSlpRmse <- sqrt(mean((obamatest$Med4Sleep - ObamaSlpPrediction)^2))
+ObamaSlpRel_change <- abs(ObamaSlpErrors) / obamatest$Med4Sleep
+ObamaSlpPred10 <- table(ObamaSlpRel_change<0.10)["TRUE"] / nrow(obamatest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+ObamaSlpPred25 <- table(ObamaSlpRel_change<0.25)["TRUE"] / nrow(obamatest)
+
+paste("2014-2015 model for Sleep Meds")
+paste("RMSE:", ObamaSlpRmse)
+paste("PRED(10):", round(ObamaSlpPred10,2))
+paste("PRED(25):", round(ObamaSlpPred25,2))
+paste("Summary of Prediction")
+summary(ObamaSlpPrediction)
+
+#22%of values are within 10% of the actual values, 66% fall within 25% of the actual values and there is a very moderate RMSE(0.65) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for allergymed}
+
+ObamaAllModel<-lm(Med4Allergy~Date, data=obamatrain70) 
+ObamaAllPrediction <- predict(ObamaAllModel, newdata =obamatest) 
+ObamaAllErrors <- ObamaAllPrediction - obamatest$Med4Allergy
+hist(ObamaAllErrors)
+ObamaAllRmse <- sqrt(mean((obamatest$Med4Allergy - ObamaAllPrediction)^2))
+ObamaAllRel_change <- abs(ObamaAllErrors) / obamatest$Med4Allergy
+ObamaAllPred10 <- table(ObamaAllRel_change<0.10)["TRUE"] / nrow(obamatest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+ObamaAllPred25 <- table(ObamaAllRel_change<0.25)["TRUE"] / nrow(obamatest)
+paste("2014-2015 model for Allergy Meds")
+paste("RMSE:", ObamaAllRmse)
+paste("PRED(10):", round(ObamaAllPred10,2))
+paste("PRED(25):", round(ObamaAllPred25,2))
+paste("Summary of Prediction")
+summary(ObamaAllPrediction)
+#41%of values are within 10% of the actual values, 81.25% are within 25% of actual values and there is a very low RMSE(0.54) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+# Obama train, trump test
+
+Using Linear Regression to train 201415 data and test on 201718.
+rheumArth, Aspirin,Ibuprofen,Sleep Med and Allergy Med had date be a significant feature so only those 5 meds were used for training and test.
+
+```{r traintest split }
+#linear reg train test split
+#rn_train <- sample(nrow(t201415), floor(nrow(t201415)*0.7))
+#obamatrain<-t20142015[rn_train,]
+#obamatest<-t20142015[-rn_train,]
+
+obamatrain<-t201415
+trumptest<-t201718[-1,]#to keep the number of observations the same
+# to reset index rownames(trumptest)<-NULL
+
+```
+
+```{r linear model for rheum arthritis}
+OTRheumModel<-lm(Med4RheumArth~Date, data=obamatrain) 
+OTRheumPrediction <- predict(OTRheumModel, newdata =trumptest) 
+OTRheumErrors <- OTRheumPrediction - trumptest$Med4RheumArth
+hist(OTRheumErrors)
+OTRheumRmse <- sqrt(mean((trumptest$Med4RheumArth - OTRheumPrediction)^2))
+OTRheumRel_change <- abs(OTRheumErrors) / trumptest$Med4RheumArth
+OTRheumPred10 <- table(OTRheumRel_change<0.10)["TRUE"] / nrow(trumptest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+OTRheumPred25 <- table(OTRheumRel_change<0.25)["TRUE"] / nrow(trumptest)
+paste("TrumpTest: Rheumatoid Athritis Med")
+paste("RMSE:", OTRheumRmse)
+paste("PRED(10):", round(OTRheumPred10,2))
+paste("PRED(25):", round(OTRheumPred25,2))
+paste("Summary of Prediction")
+summary(OTRheumPrediction)
+plot(OTRheumErrors)
+plot(fitted(OTRheumModel), resid(OTRheumModel))
+#91%of values are within 10% of the actual values, 100% of values are within 25% of actualvalues and there is a very low RMSE(0.178) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for Aspirin}
+OTAspModel<-lm(Aspirin~Date, data=obamatrain) 
+OTAspPrediction <- predict(OTAspModel, newdata=trumptest) 
+OTAspErrors <- OTAspPrediction - trumptest$Aspirin
+hist(OTAspErrors)
+OTAspRmse <- sqrt(mean((trumptest$Aspirin - OTAspPrediction)^2))
+OTAspRel_change <- abs(OTAspErrors) / trumptest$Aspirin
+
+OTAspPred10 <- table(OTAspRel_change<0.10)["TRUE"] / nrow(trumptest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+OTAspPred25 <- table(OTAspRel_change<0.25)["TRUE"] / nrow(trumptest)
+paste("TrumpTest: Aspirin")
+paste("RMSE:", OTAspRmse)
+paste("PRED(10):", round(OTAspPred10,2))
+paste("PRED(25):", round(OTAspPred25,2))
+paste("Summary of Prediction")
+summary(OTAspPrediction)
+
+#60% of values are within 10% of the actual values and 91% of values are within 25% of actual values there is a very low RMSE(0.243) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for Ibuprofen}
+
+OTIbModel<-lm(Ibuprofen~Date, data=obamatrain) 
+OTIbPrediction <- predict(OTIbModel, newdata =trumptest) 
+OTIbErrors <- OTIbPrediction - trumptest$Ibuprofen
+hist(OTIbErrors)
+OTIbRmse <- sqrt(mean((trumptest$Ibuprofen - OTIbPrediction)^2))
+OTIbRel_change <- abs(OTIbErrors) / trumptest$Ibuprofen
+OTIbPred10 <- table(OTIbRel_change<0.10)["TRUE"] / nrow(trumptest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+OTIbPred25 <- table(OTIbRel_change<0.25)["TRUE"] / nrow(trumptest)
+
+paste("TrumpTest: Ibuprofen")
+paste("RMSE:", OTIbRmse)
+paste("PRED(10):", round(OTIbPred10,2))
+paste("PRED(25):", round(OTIbPred25,2))
+paste("Summary of Prediction")
+summary(OTIbPrediction)
+
+
+# 26% of predicted values fall within 25% of actual values . 91%of values are within 25% of the actual values and there is a very low RMSE(0.283) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for sleep med}
+
+OTSlpModel<-lm(Med4Sleep~Date, data=obamatrain) 
+OTSlpPrediction <- predict(OTSlpModel, newdata=trumptest) 
+OTSlpErrors <- OTSlpPrediction - trumptest$Med4Sleep
+hist(OTSlpErrors)
+OTSlpRmse <- sqrt(mean((trumptest$Med4Sleep - OTSlpPrediction)^2))
+OTSlpRel_change <- abs(OTSlpErrors) / trumptest$Med4Sleep
+OTSlpPred10 <- table(OTSlpRel_change<0.10)["TRUE"] / nrow(trumptest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+OTSlpPred25 <- table(OTSlpRel_change<0.25)["TRUE"] / nrow(trumptest)
+
+paste("TrumpTest: Sleep Medicine")
+paste("RMSE:", OTSlpRmse)
+paste("PRED(10):", round(OTSlpPred10,2))
+paste("PRED(25):", round(OTSlpPred25,2))
+paste("Summary of Prediction")
+summary(OTSlpPrediction)
+
+#None of the values are within 10% of the actual values, 2% fall within 25% of the actual values and there is an RMSE 1.25 which is very high which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for allergymed}
+
+OTAllModel<-lm(Med4Allergy~Date, data=obamatrain) 
+OTAllPrediction <- predict(OTAllModel, newdata =trumptest) 
+OTAllErrors <- OTAllPrediction - trumptest$Med4Allergy
+hist(OTAllErrors)
+OTAllRmse <- sqrt(mean((trumptest$Med4Allergy - OTAllPrediction)^2))
+OTAllRel_change <- abs(OTAllErrors) / trumptest$Med4Allergy
+OTAllPred10 <- table(OTAllRel_change<0.10)["TRUE"] / nrow(trumptest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+OTAllPred25 <- table(OTAllRel_change<0.25)["TRUE"] / nrow(trumptest)
+
+paste("TrumpTest: Allergy Medicine")
+paste("RMSE:", OTAllRmse)
+paste("PRED(10):", round(OTAllPred10,2))
+paste("PRED(25):", round(OTAllPred25,2))
+paste("Summary of Predictions")
+summary(OTAllPrediction)
+
+#41%of values are within 10% of the actual values, 81.25% are within 25% of actual values and there is a very low RMSE(0.54) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+
+# Question 2 part 2 Data cleaning and Models
+```{r stocktickers found in 200+dataset}
+#run this
+nyseticker<-read.csv("nyseticker.csv")
+
+
+nasdaqticker<-read.csv("nasdaqticker.csv")
+
+
+#change names of pricevar column so it is same for all dataframes
+st2002014<-read.csv("2014_Financial_Data.csv")
+colnames(st2002014)[224]<-"NxtYearPriceVar"
+
+st2002015<-read.csv("2015_Financial_Data.csv")
+colnames(st2002015)[224]<-"NxtYearPriceVar"
+
+st2002016<-read.csv("2016_Financial_Data.csv")
+colnames(st2002016)[224]<-"NxtYearPriceVar"
+
+st2002017<-read.csv("2017_Financial_Data.csv")
+colnames(st2002017)[224]<-"NxtYearPriceVar"
+
+st2002018<-read.csv("2018_Financial_Data.csv")
+colnames(st2002018)[224]<-"NxtYearPriceVar"
+unique(st2002014$Sector)
+
+
+obamastocks<-rbind(st2002014,st2002015)
+obamahealthcare<-obamastocks[obamastocks$Sector=="Healthcare", ]
+
+trumpstocks<-rbind(st2002017,st2002018)
+trumphealthcare<-trumpstocks[trumpstocks$Sector=="Healthcare", ]
+
+trumphealthcare$nyselabel<-ifelse(trumphealthcare$X%in%nyseticker$Ticker,1,0)
+trumphealthcare$naslabel<-ifelse(trumphealthcare$X%in%nasdaqticker$Ticker,1,0)
+obamahealthcare$nyselabel<-ifelse(obamahealthcare$X%in%nyseticker$Ticker,1,0)
+obamahealthcare$naslabel<-ifelse(obamahealthcare$X%in%nasdaqticker$Ticker,1,0)
+
+```
+# only obama model
+
+```{r}
+#str(obamahealthcare)
+#get rid of columns that will give feature selection trouble
+obamahealth<-obamahealthcare[,-c(93,112,114,223)]
+```
+
+```{r impute missing values}
+for(i in 1:ncol(obamahealth)) {
+  obamahealth[ , i][is.na(obamahealth[ , i])] <- mean(obamahealth[ , i], na.rm = TRUE)
+}
+#label the dataset in the data cleaning rmd
+#now only pharmaceutical on the stock exchanges are included
+notpharma<-c(which(obamahealth$naslabel==0 & obamahealth$nyselabel==0))
+obamahealth<-obamahealth[-notpharma,]
+sum(is.na(obamahealth))
+```
+```{r correlation and normalization}
+#log everything to normalize dataset, add high constant 
+normfunc<-function(x){
+  (x-min(x))/(max(x)-min(x))
+}
+#include range to not get rid of any columns
+obamahealth[,2:220]<-lapply(obamahealth[,2:220],normfunc)
+numobama<-obamahealth[,2:220]
+ObamaCorMat <- cor(numobama, method = "pearson")  ### only numeric vars
+highlyCorrelated <- findCorrelation(ObamaCorMat, cutoff=0.75)
+obamahealth <- obamahealth[,-highlyCorrelated]
+rownames(obamahealth)<-NULL# to reset index
+
+```
+
+
+
+```{r backward selection}
+
+#impute missing values to prevent errors in feature selection
+#normalize the data
+#do correlation analysis first
+#make sure to only run models on numeric values
+set.seed(1)
+full <- lm(Class~.,data=obamahealth)
+stepB <- stepAIC(full, direction= "backward", trace=FALSE)
+summary(stepB)
+
+```
+
+
+
+```{r}
+selectedobama<-obamahealth[ ,c(10,14,22,24,27,56,66,85,94,100)]
+#rename class labels for proper glm
+selectedobama$Class<-ifelse(selectedobama$Class==1,"inc","dec")
+selectedobama$Class<-as.factor(selectedobama$Class)
+
+```
+
+```{r}
+set.seed(1)
+sampletrain <- sample(nrow(selectedobama), floor(nrow(selectedobama)*0.7))
+selobtrain <- selectedobama[sampletrain,]#training set with labels
+selobtest <- selectedobama[-sampletrain,]#test set with labels
+selobtrainlabel<-selobtrain[,10]
+selobtestlabel<-selobtest[,10]
+selobtest<-selobtest[,-10]#test set no labels
+```
+
+```{r}
+library(caretEnsemble)
+set.seed(1)
+control <- trainControl(method="repeatedcv", number = 10, repeats=5, savePredictions="final", classProbs = TRUE)
+algorithmList <- c('rf', 'svmPoly', 'glm', 'naive_bayes')
+set.seed(1)
+models_selob <- caretList(Class~., data=selobtrain, trControl=control, methodList=algorithmList)
+set.seed(1)
+results_selob <- resamples(models_selob)
+summary(results_selob)
+dotplot(results_selob)  
+modelCor(results_selob)
+
+```
+
+```{r}
+#no model is very correlated but naive bayes has low accuracy
+library(caretEnsemble)
+set.seed(1)
+control2 <- trainControl(method="repeatedcv", number = 10, repeats=5, savePredictions="final",classProbs = TRUE)
+algorithmList2 <- c('rf', 'glm', 'svmPoly')
+set.seed(1)
+models_selob2 <- caretList(Class~., data=selobtrain, trControl=control2, methodList=algorithmList2)
+set.seed(1)
+results_selob2 <- resamples(models_selob2)
+summary(results_selob2)
+dotplot(results_selob2)  
+modelCor(results_selob2)
+```
+
+```{r}
+set.seed(1)
+stackControl <- trainControl(method="repeatedcv", number=10, repeats=5, savePredictions=TRUE, classProbs=TRUE)
+set.seed(1)
+selobstack.rf <- caretStack(models_selob2, method="rf", metric="Accuracy", trControl=stackControl)
+print(selobstack.rf)  ##ensemble model
+```
+
+```{r}
+stack.pred <- predict(selobstack.rf , selobtest)
+cf_ensemble_selob <- confusionMatrix(as.factor(stack.pred), as.factor(selobtestlabel) , positive="inc", mode = "everything")
+print(cf_ensemble_selob)
+```
+
+# obama train, trump test 
+
+```{r}
+#first run feature selection
+trumphealth<-trumphealthcare[,-c(93,112,114,223)]
+
+```
+
+```{r impute missing values}
+for(i in 1:ncol(trumphealth)) {
+  trumphealth[ , i][is.na(trumphealth[ , i])] <- mean(trumphealth[ , i], na.rm = TRUE)
+}
+#label the dataset in the data cleaning rmd
+#now only pharmaceutical on the stock exchanges are included
+notpharma<-c(which(trumphealth$naslabel==0 & trumphealth$nyselabel==0))
+trumphealth<-trumphealth[-notpharma,]
+sum(is.na(trumphealth))
+```
+
+```{r}
+#normalize dataset
+trumphealth[,2:220]<-lapply(trumphealth[,2:220],normfunc)
+
+selectedtrumpfromob<-trumphealth[ ,c(41,51,72,76,84,155,168,205,215,221)]
+
+selectedtrumpfromob$Class<-ifelse(selectedtrumpfromob$Class==1,"inc","dec")
+selectedtrumpfromob$Class<-as.factor(selectedtrumpfromob$Class)
+rownames(selectedtrumpfromob)<-NULL #reset index
+
+```
+
+```{r trump features from obama}
+set.seed(1)
+#sampletrain <- sample(nrow(selectedobama), floor(nrow(selectedobama)*0.7))
+fullobtrain <- selectedobama[,]#training set with labels
+fulltrumptest <- selectedtrumpfromob[,]#test set with labels
+fullobamatrainlabel<-fullobtrain[,10]
+fulltrumptestlabel<-fulltrumptest[,10]
+fulltrumptest<-fulltrumptest[,-10]#test set no labels
+```
+
+```{r 70%obama model with fulltrump test}
+OTstack.pred <- predict(selobstack.rf , fulltrumptest)
+cf_ensemble_OT <- confusionMatrix(as.factor(OTstack.pred), as.factor(fulltrumptestlabel) , positive="inc", mode = "everything")
+print(cf_ensemble_OT)
+```
+
+# Ensemble Model for training all of obama and only testing with trump, not used in report
+
+```{r trump features from obama}
+library(caretEnsemble)
+set.seed(1)
+control <- trainControl(method="repeatedcv", number = 5, repeats=3, savePredictions="final", classProbs = TRUE)
+algorithmList <- c('rf', 'svmPoly', 'glm', 'naive_bayes')
+set.seed(1)
+models_fullob <- caretList(Class~., data=fullobtrain, trControl=control, methodList=algorithmList)
+set.seed(1)
+results_fullob <- resamples(models_fullob)
+summary(results_fullob)
+dotplot(results_fullob)  
+modelCor(results_fullob)
+#removing random forest because of NA and overfitting
+```
+
+```{r trump features from obama}
+library(caretEnsemble)
+set.seed(1)
+control2 <- trainControl(method="repeatedcv", number = 5, repeats=3, savePredictions="final",classProbs = TRUE)
+algorithmList2 <- c('svmPoly', 'glm', 'naive_bayes')
+set.seed(1)
+models_fullob2 <- caretList(Class~., data=fullobtrain, trControl=control, methodList=algorithmList2)
+set.seed(1)
+results_fullob2 <- resamples(models_fullob2)
+summary(results_fullob2)
+dotplot(results_fullob2)  
+modelCor(results_fullob2)
+```
+
+```{r}
+#second ensemble wasn't run because the models weren't corelated, changed models_fullob2 to models_fullob
+set.seed(1)
+stackControl <- trainControl(method="repeatedcv", number=10, repeats=3, savePredictions=TRUE, classProbs=TRUE)
+set.seed(1)
+fullobstack.rf <- caretStack(models_fullob, method="rf", metric="Accuracy", trControl=stackControl)
+print(fullobstack.rf)  ##ensemble model
+```
+
+```{r}
+fullobstack.pred <- predict(fullobstack.rf , fulltrumptest)
+cf_ensemble_fullob <- confusionMatrix(as.factor(fullobstack.pred), as.factor(fulltrumptestlabel) , positive="inc", mode = "everything")
+print(cf_ensemble_fullob)
+```
+
+# only trump ensemble model, 
+
+```{r correlation and normalization}
+
+trumphealth<-trumphealthcare[,-c(93,112,114,223)]
+
+for(i in 1:ncol(trumphealth)) {
+  trumphealth[ , i][is.na(trumphealth[ , i])] <- mean(trumphealth[ , i], na.rm = TRUE)
+}
+#log everything to normalize dataset, add high constant 
+normfunc<-function(x){
+  (x-min(x))/(max(x)-min(x))
+}
+#label the dataset in the data cleaning rmd
+#now only pharmaceutical on the stock exchanges are included
+notpharma<-c(which(trumphealth$naslabel==0 & trumphealth$nyselabel==0))
+trumphealth<-trumphealth[-notpharma,]
+#sum(is.na(obamahealth))
+#include range to not get rid of any columns
+trumphealth[,2:220]<-lapply(trumphealth[,2:220],normfunc)
+numtrump<-trumphealth[,2:220]
+
+TrumpCorMat <- cor(numtrump, method = "pearson")  ### only numeric vars
+TrumpCorMat
+highlyCorrelated <- findCorrelation(TrumpCorMat, cutoff=0.75)
+trumphealth <- trumphealth[,-highlyCorrelated]
+rownames(trumphealth)<-NULL# to reset index
+# trump era has more correlated variables. non correlated left 100
+
+```
+
+
+```{r backward selection}
+
+#impute missing values to prevent errors in feature selection
+#normalize the data
+#do correlation analysis first
+#make sure to only run models on numeric values
+fulltrump <- lm(Class~.,data=trumphealth)
+trumpstepB <- stepAIC(fulltrump, direction= "backward", trace=FALSE)
+summary(trumpstepB)
+
+```
+
+```{r}
+selectedtrump<-trumphealth[ ,c(3,6,10,14,15,16,24,29,95,105,110,111,112,113)]
+#rename class labels for proper glm
+selectedtrump$Class<-ifelse(selectedtrump$Class==1,"inc","dec")
+selectedobama$Class<-as.factor(selectedobama$Class)
+
+```
+
+```{r}
+set.seed(1)
+sampletrain <- sample(nrow(selectedobama), floor(nrow(selectedobama)*0.7))
+selobtrain <- selectedobama[sampletrain,]#training set with labels
+selobtest <- selectedobama[-sampletrain,]#test set with labels
+selobtrainlabel<-selobtrain[,12]
+selobtestlabel<-selobtest[,12]
+selobtest<-selobtest[,-12]#test set no labels
+```
+
+```{r}
+library(caretEnsemble)
+set.seed(1)
+control <- trainControl(method="repeatedcv", number = 5, repeats=3, savePredictions="final", classProbs = TRUE)
+algorithmList <- c('rf', 'svmPoly', 'glm', 'naive_bayes')
+set.seed(1)
+models_selob <- caretList(Class~., data=selobtrain, trControl=control, methodList=algorithmList)
+set.seed(1)
+results_selob <- resamples(models_selob)
+summary(results_selob)
+dotplot(results_selob)  
+modelCor(results_selob)
+
+```
+
+```{r}
+library(caretEnsemble)
+set.seed(1)
+control2 <- trainControl(method="repeatedcv", number = 5, repeats=3, savePredictions="final",classProbs = TRUE)
+algorithmList2 <- c('rf', 'glm', 'svmPoly')
+set.seed(1)
+models_selob2 <- caretList(Class~., data=selobtrain, trControl=control, methodList=algorithmList2)
+set.seed(1)
+results_selob2 <- resamples(models_selob2)
+summary(results_selob2)
+dotplot(results_selob2)  
+modelCor(results_selob2)
+```
+
+```{r}
+set.seed(1)
+stackControl <- trainControl(method="repeatedcv", number=10, repeats=3, savePredictions=TRUE, classProbs=TRUE)
+set.seed(1)
+selobstack.rf <- caretStack(models_selob2, method="rf", metric="Accuracy", trControl=stackControl)
+print(selobstack.rf)  ##ensemble model
+```
+
+```{r}
+stack.pred <- predict(selobstack.rf , selobtest)
+cf_ensemble_selob <- confusionMatrix(as.factor(stack.pred), as.factor(selobtestlabel) , positive="inc", mode = "everything")
+print(cf_ensemble_selob)
+```
+

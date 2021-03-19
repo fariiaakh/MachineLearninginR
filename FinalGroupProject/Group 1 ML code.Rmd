@@ -1,0 +1,1819 @@
+---
+title: "Group 1 code"
+author: "Group 1"
+date: "12/9/2020"
+output: pdf_document
+---
+
+#Question 1: Given today’s stock and pharmaceutical sales data, what is the best stock value to buy tomorrow?
+
+## data cleaning
+
+### Prepare Data for Merging
+### 1. Load Data
+
+```{r}
+library(janitor)
+library(tidyverse)
+library(dplyr)
+```
+
+
+```{r}
+# Load Stock Market Data of Pharmaceutical Companies
+stock_market <- read_excel("Stock_Market_Compiled.xlsx")
+# Load Daily Pharmaceutical Sales
+daily_sales <- read_csv("salesdaily.csv")
+```
+
+### 2. Prepare Data and Merge
+```{r}
+# Average all pharmaceutical companies' stock values by date
+stock_market_by_date <-
+  stock_market %>%
+  clean_names() %>% 
+  group_by(date) %>% 
+  summarise_if(.predicate = function(x) is.numeric(x),
+               .funs = funs(mean="mean")) %>% 
+  mutate(date = as.Date(date))
+```
+
+```{r}
+# Reformat date to match stock market data for merging
+daily_sales_date <-
+  daily_sales  %>%
+  clean_names() %>% 
+  separate(datum, c("month", "date", "year"), "/") %>% 
+  mutate(datum = paste(year, month, date, sep = "-"), 
+         datum = as.Date(datum)) %>% 
+  filter(!(year=="2019")) %>% # Include only 2014-2019 data
+  select(c(datum, m01ab:weekday_name)) %>% 
+  rename("date" = datum)
+```
+
+```{r}
+# Merge all columns of stock market data and daily sales
+daily_sales_stock <- full_join(daily_sales_date, stock_market_by_date, by = c("date"))
+```
+
+```{r}
+# Write data to share with teammates
+write.csv(daily_sales_stock, "daily_sales_stock.csv", row.names = F)
+```
+
+### 3. Prepare Merged Data
+```{r}
+dss_renamed <-
+  daily_sales_stock %>% 
+  rename_at(.vars = 2:9, ~c("Med4RheumArth","Med4OstArth", "Aspirin",
+                            "Ibuprofen", "Med4Tension", "Med4Sleep", 
+                            "Meds4Asthma", "Meds4Allergy"))
+```
+
+```{r}
+library(tidyverse)
+library(RCurl) # getURL 
+library(MASS) # stepwise regression
+library(leaps) # all subsets regression
+library(corrplot)
+library(caret)
+library(FNN)
+library(mlbench)
+library(rcompanion)
+library(e1071) 
+```
+
+
+#Import Merged Dataset and change column names of drugs (pharma data)
+```{r}
+data<-read.csv("daily_sales_stock.csv")
+data<-drop_na(data)
+colnames(data)[3:10]<-c("Med4RheumArth","Med4OstArth", "Aspirin","Ibuprofen", "Med4Tension", "Med4Sleep", "Meds4Asthma", "Meds4Allergy")
+str(data)
+```
+
+#creating the column/variable low_price_next_day (Low Price of stock of next day) as our dependent variable
+```{r}
+shift <- function(x, n){
+  c(x[-(seq(n))], rep(NA, n))}
+
+data$low_price_next_day<-shift(data$low_mean,1)
+data<-drop_na(data)
+```
+
+#Explore Dependent (Target) Varibale: low_price_next_day (Low Price of stock of next day)
+```{r}
+ggplot(data=data)+
+  geom_boxplot(mapping = aes(x = low_price_next_day), color="#00AFBB") +
+  coord_flip()+
+  xlab("Low Stock Price of Next Day") +
+  ggtitle("Distribution of Low Stock Price (2014-2018)") +
+  theme(plot.title = element_text(size=12, face = "bold"))
+
+plotNormalHistogram(data$low_price_next_day)
+
+paste("Skewness of DV (next day low price):" ,skewness(data$low_price_next_day))
+
+
+ggplot(data = data, aes(x = as.Date(date), y = low_price_next_day))+
+  geom_line(color = "#00AFBB")+
+  xlab("Time")+
+  ylab("Low Stock Price of Next Day")+
+  ggtitle("Low Stock Price (2014-2018)") +
+  theme(plot.title = element_text(size=12, face = "bold"))
+```
+The target variable is fairly symmetrical/normally distributed.
+
+
+###Data Preprocessing (of IVs)
+###Structure of Dataset
+```{r}
+data<-data[,-c(1,11)] #drop index(X)  and hour columns
+str(data)
+```
+
+### Correlation Analysis
+###Identify highly correlated "numeric" variables 
+```{r}
+###draw correlation matrix of the numeric independent variables only
+num_data <- data[,-c(1,10,17)] ### remove date and weekday_name as well as low_price_next_day because it is our dependent variable
+correlationMatrix <- cor(num_data, method = "pearson") 
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corrplot(correlationMatrix, method="color", col=col(200),   
+         type="upper", order="hclust", 
+         tl.col="black", tl.srt=45, tl.cex= 0.7, #Text label color and rotation
+         # Combine with significance
+         sig.level = 0.01, 
+         # hide correlation coefficient on the principal diagonal
+         diag=FALSE
+)           
+
+```
+
+###Remove highly correlated numeric IVs (0.6)
+```{r}
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.6)
+noncor <- num_data[,-highlyCorrelated]  #keep only those not highly 
+correlationMatrix2 <- cor(noncor, method = "pearson")  ### only numeric vars
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corrplot(correlationMatrix2, method="ellipse", col=col(200),   
+         type="upper", order="hclust", 
+         tl.col="black", tl.srt=45, tl.cex= 0.7, #Text label color and rotation
+         # Combine with significance
+         sig.level = 0.01, 
+         # hide correlation coefficient on the principal diagonal
+         diag=FALSE
+)
+```
+###Normalizing numeric IVs
+```{r}
+normalize <- function(x) {
+               return ((x - min(x)) / (max(x) - min(x))) }
+
+noncor_n <- as.data.frame(lapply(noncor, normalize))
+
+data_n<-cbind(noncor_n,data[,c(1,10,17)])
+```
+
+
+###Features Selection by Backward Elimination
+```{r}
+full <- lm(low_price_next_day~.,data=data_n[,-11])
+stepB <- stepAIC(full, direction= "backward", trace=TRUE)
+summary(stepB)
+```
+Significant IVs are: Med4RheumArth, Aspirin, Ibuprofen, Med4Tension, Meds4Asthma, Meds4Allergy, adj_close_mean, and volume_mean. Hence will drop Med4OstArth, Med4Sleep, Meds4Allergy, and weekday_name
+
+###Dropping non-significant IVs (but still keeping date)
+```{r}
+data_n<-data_n[,-c(2,6,8,12)]
+colnames(data_n)
+```
+
+
+
+##Code for 8 Machine Learning Models nd Auto Arima
+
+
+
+###Linear Regression Model
+### Model Assumptions
+```{r}
+LRmodel1 <- lm(low_price_next_day ~., data = train)
+summary(LRmodel1)
+plot(LRmodel1)
+```
+All four sssumptions of parametric linear regression were violated here. However, we decided to go against a transformation for interpretability and comparison (with other models) reasons.
+
+
+###cross validation parameters
+```{r}
+ctrl <- trainControl(method="repeatedcv", number =5, repeats=3)  
+```
+
+###Model and distribution of errors
+```{r}
+set.seed(123)
+LRmodel <- train(low_price_next_day ~ ., data= train, method="lm", trControl = ctrl)
+
+
+test_predLR <- predict(LRmodel, test)
+errors <- test_predLR - test_labels
+summary(LRmodel)
+hist(errors)
+```
+
+
+###RMSE and cases with less than 25%, 10%, 5%, and 1% error
+```{r}
+rmse <- sqrt(mean((test_labels - test_predLR)^2))
+
+rel_change <- abs(errors) / test_labels
+pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)   ## gives the count of those who are true on the condition of rel_change<25%
+##OR pred25 <- table(rel_change<0.25)["TRUE"] / nrow(test)
+
+pred10 <- sum((rel_change<0.10)=="TRUE")/nrow(test)  ## gives the count of those who are true on the condition of rel_change<10%
+
+pred5 <- sum((rel_change<0.05)=="TRUE")/nrow(test)  ## gives the count of those who are true on the condition of rel_change<5%
+
+pred1 <- sum((rel_change<0.01)=="TRUE")/nrow(test)  ## gives the count of those who are true on the condition of rel_change<1%
+
+paste("RMSE:", rmse)
+paste("Pred(25%):", pred25)
+paste("Pred(10%):", pred10)
+paste("Pred(5%):", pred5)
+paste("Pred(1%):", pred1)
+```
+
+###Creating the time series dataset for low stock price (of next day)
+```{r}
+data_ts<-data_n[,c(8,9)]
+data_ts$date <- as.Date(data_ts$date)
+```
+
+```{r}
+train_ts<-data_ts[1:(cut-1),]
+test_ts<-data_ts[cut:nrow(data_n),]
+```
+
+###Plot
+```{r}
+test_ts$preds<- test_predLR
+ggplot(data = train_ts, aes(x = as.Date(date), y = low_price_next_day,color = "aquamarine3"))+
+  geom_line()+
+  geom_line(data = test_ts, aes(x = as.Date(date), y = low_price_next_day ,color="dodgerblue3"))+
+  geom_line(data = test_ts, aes(x = as.Date(date), y = preds,color="orangered3"))+
+  scale_color_identity(name = " ",
+                       breaks = c("aquamarine3", "dodgerblue3", "orangered3"),
+                       labels = c("Training", "Test", "Prediction"),
+                       guide = "legend")+
+  xlab("Time")+
+  ylab("Low Stock Price of Next Day")+
+  ggtitle("Low Stock Price (Next Day): Linear Regression") +
+  theme(plot.title = element_text(size=12, face = "bold"))
+```
+
+###KNN Model
+```{r}
+train_labels <- train[,8]      ##DV in the training set
+test_labels <- test_labels     ##DV in the test set
+train_set <- train[,-8]        ##Only keep IV in the training set
+test_set <- test               ##Only keep IV in the test set
+```
+
+###Best value of K
+```{r} 
+x <- 0
+for (i in 1:10)
+{
+KNNmodel <- knn.reg(train =train_set , test = test_set, y = train_labels , k = i)  
+test_predKNN<- KNNmodel$pred
+rmse <- sqrt(mean((test_labels-test_predKNN)^2))
+x[i] <- rmse
+}
+
+plot(x, type="l", col="red")
+bk<-which.min(x)
+paste('Best K(by RMSE):', bk)
+```
+
+###Model and distribution of errors
+```{r}
+set.seed(123)
+KNNmodel <- knn.reg(train =train_set , test = test_set, y = train_labels , k =bk)
+test_predKNN <- KNNmodel$pred
+errors <- test_predKNN - test_labels
+hist(errors)
+```
+
+###RMSE and cases with less than 25%, 10%, 5%, and 1% error
+```{r}
+rmse <- sqrt(mean((test_labels-test_predKNN)^2))
+
+rel_change <- abs(errors) / test_labels
+pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test_set)   ## gives the count of those who are true on the condition of rel_change<25%
+##OR pred25 <- table(rel_change<0.25)["TRUE"] / nrow(test_test)
+
+pred10 <- sum((rel_change<0.10)=="TRUE")/nrow(test_set)  ## gives the count of those who are true on the condition of rel_change<10%
+
+pred5 <- sum((rel_change<0.05)=="TRUE")/nrow(test_set)  ## gives the count of those who are true on the condition of rel_change<5%
+
+pred1 <- sum((rel_change<0.01)=="TRUE")/nrow(test_set)  ## gives the count of those who are true on the condition of rel_change<1%
+
+paste("RMSE:", rmse)
+paste("Pred(25%):", pred25)
+paste("Pred(10%):", pred10)
+paste("Pred(5%):", pred5)
+paste("Pred(1%):", pred1)
+```
+
+
+###Re-creating the time series dataset for low stock price (of next day)
+```{r}
+data_ts<-data_n[,c(8,9)]
+data_ts$date <- as.Date(data_ts$date)
+```
+
+```{r}
+train_ts<-data_ts[1:(cut-1),]
+test_ts<-data_ts[cut:nrow(data_n),]
+```
+
+###Plot
+```{r}
+test_ts$preds<- test_predKNN
+ggplot(data = train_ts, aes(x = as.Date(date), y = low_price_next_day,color = "aquamarine3"))+
+  geom_line()+
+  geom_line(data = test_ts, aes(x = as.Date(date), y = low_price_next_day ,color="dodgerblue3"))+
+  geom_line(data = test_ts, aes(x = as.Date(date), y = preds,color="orangered3"))+
+  scale_color_identity(name = " ",
+                       breaks = c("aquamarine3", "dodgerblue3", "orangered3"),
+                       labels = c("Training", "Test", "Prediction"),
+                       guide = "legend")+
+  xlab("Time")+
+  ylab("Low Stock Price of Next Day")+
+  ggtitle("Low Stock Price (Next Day): KNN Regression") +
+  theme(plot.title = element_text(size=12, face = "bold"))
+```
+
+###Random Forest Model
+###Best number of trees
+```{r}
+set.seed(123)
+library(randomForest)
+m1 <- randomForest(formula = low_price_next_day ~ ., data = train)
+
+plot(m1)
+bntrees<-which.min(m1$mse)
+paste("Best number of tree:", bntrees)
+```
+
+###Model and distribution of errors
+
+
+
+```{r}
+set.seed(123)
+RFmodel <- train(low_price_next_day ~ ., data= train, method="rf", ntree=bntrees, trControl = ctrl)
+
+test_predRF <- predict(RFmodel, test)
+errors <- test_predRF - test_labels
+hist(errors)
+```
+
+###RMSE and cases with less than 25%, 10%, 5%, and 1% error
+```{r}
+rmse <- sqrt(mean((test_labels-test_predRF)^2))
+
+rel_change <- abs(errors) / test_labels
+pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)   ## gives the count of those who are true on the condition of rel_change<25%
+##OR pred25 <- table(rel_change<0.25)["TRUE"] / nrow(test)
+
+pred10 <- sum((rel_change<0.10)=="TRUE")/nrow(test)  ## gives the count of those who are true on the condition of rel_change<10%
+
+pred5 <- sum((rel_change<0.05)=="TRUE")/nrow(test)  ## gives the count of those who are true on the condition of rel_change<5%
+
+pred1 <- sum((rel_change<0.01)=="TRUE")/nrow(test)  ## gives the count of those who are true on the condition of rel_change<1%
+
+paste("RMSE:", rmse)
+paste("Pred(25%):", pred25)
+paste("Pred(10%):", pred10)
+paste("Pred(5%):", pred5)
+paste("Pred(1%):", pred1)
+```
+
+###Re-creating the time series dataset for low stock price (of next day)
+```{r}
+data_ts<-data_n[,c(8,9)]
+data_ts$date <- as.Date(data_ts$date)
+```
+
+```{r}
+train_ts<-data_ts[1:(cut-1),]
+test_ts<-data_ts[cut:nrow(data_ts),]
+```
+
+###Plot
+```{r}
+test_ts$preds<- test_predRF
+ggplot(data = train_ts, aes(x = as.Date(date), y = low_price_next_day,color = "aquamarine3"))+
+  geom_line()+
+  geom_line(data = test_ts, aes(x = as.Date(date), y = low_price_next_day ,color="dodgerblue3"))+
+  geom_line(data = test_ts, aes(x = as.Date(date), y = preds,color="orangered3"))+
+  scale_color_identity(name = " ",
+                       breaks = c("aquamarine3", "dodgerblue3", "orangered3"),
+                       labels = c("Training", "Test", "Prediction"),
+                       guide = "legend")+
+  xlab("Time")+
+  ylab("Low Stock Price of Next Day")+
+  ggtitle("Low Stock Price (Next Day): Random Forest Regression") +
+  theme(plot.title = element_text(size=12, face = "bold"))
+```
+
+###SVM Regression
+###Model and distribution of errors
+```{r}
+set.seed(123)
+SVMmodel <- train(low_price_next_day ~ ., data= train, method="svmPoly", trControl = ctrl)
+
+test_predSVM <- predict(SVMmodel, test)
+errors <- test_predSVM - test_labels
+hist(errors)
+```
+
+###RMSE and cases with less than 25%, 10%, 5%, and 1% error
+```{r}
+rmse <- sqrt(mean((test_labels-test_predSVM)^2))
+
+rel_change <- abs(errors) / test_labels
+pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)   ## gives the count of those who are true on the condition of rel_change<25%
+##OR pred25 <- table(rel_change<0.25)["TRUE"] / nrow(test)
+
+pred10 <- sum((rel_change<0.10)=="TRUE")/nrow(test)  ## gives the count of those who are true on the condition of rel_change<10%
+
+pred5 <- sum((rel_change<0.05)=="TRUE")/nrow(test)  ## gives the count of those who are true on the condition of rel_change<5%
+
+pred1 <- sum((rel_change<0.01)=="TRUE")/nrow(test)  ## gives the count of those who are true on the condition of rel_change<1%
+
+paste("RMSE:", rmse)
+paste("Pred(25%):", pred25)
+paste("Pred(10%):", pred10)
+paste("Pred(5%):", pred5)
+paste("Pred(1%):", pred1)
+```
+
+###Re-creating the time series dataset for low stock price (of next day)
+```{r}
+data_ts<-data_n[,c(8,9)]
+data_ts$date <- as.Date(data_ts$date)
+```
+
+```{r}
+train_ts<-data_ts[1:(cut-1),]
+test_ts<-data_ts[cut:nrow(data_ts),]
+```
+
+###Plot
+```{r}
+test_ts$preds<- test_predSVM
+ggplot(data = train_ts, aes(x = as.Date(date), y = low_price_next_day,color = "aquamarine3"))+
+  geom_line()+
+  geom_line(data = test_ts, aes(x = as.Date(date), y = low_price_next_day ,color="dodgerblue3"))+
+  geom_line(data = test_ts, aes(x = as.Date(date), y = preds,color="orangered3"))+
+  scale_color_identity(name = " ",
+                       breaks = c("aquamarine3", "dodgerblue3", "orangered3"),
+                       labels = c("Training", "Test", "Prediction"),
+                       guide = "legend")+
+  xlab("Time")+
+  ylab("Low Stock Price of Next Day")+
+  ggtitle("Low Stock Price (Next Day): SVM Regression") +
+  theme(plot.title = element_text(size=12, face = "bold"))
+```
+
+###Ensemble Model
+```{r}
+library(caretEnsemble)
+control <- trainControl(method="repeatedcv", number = 5, repeats=3, savePredictions="final")
+algorithmList <- c('rf', 'svmPoly', 'lm')
+set.seed(123)
+models_ens <- caretList(low_price_next_day~., data= train, trControl=control, methodList=algorithmList)
+set.seed(123)
+results <- resamples(models_ens)
+summary(results)
+dotplot(results)  
+modelCor(results)
+```
+SVM is highly correlated with random forest(RF) and linear regression(LR/LM). Hence, we will keep only random forest and linear regression.
+
+###only keep RF and LR/LM
+```{r}
+library(caretEnsemble)
+control <- trainControl(method="repeatedcv", number = 5, repeats=3, savePredictions="final")
+algorithmList <- c('rf', 'lm')
+set.seed(123)
+models_ens2 <- caretList(low_price_next_day~., data= train, trControl=control, methodList=algorithmList)
+set.seed(123)
+results2 <- resamples(models_ens2)
+summary(results2)
+dotplot(results2)  
+modelCor(results2)
+```
+
+###Combine predictions of the final models (RF and LR/LM) used using stack with RF
+```{r}
+stackControl <- trainControl(method="repeatedcv", number=5, repeats=3, savePredictions=TRUE)
+set.seed(123)
+stack.rf <- caretStack(models_ens2, method="rf", metric="RMSE", trControl=stackControl)
+print(stack.rf)  ##ensemble model
+```
+
+###predict stack.rf on the test dataset and plot its errors
+```{r}
+test_predEM <- predict(stack.rf , test)
+errors <- test_predEM - test_labels
+hist(errors)
+```
+
+###RMSE and cases with less than 25%, 10%, 5%, and 1% error
+```{r}
+rmse <- sqrt(mean((test_labels-test_predEM)^2))
+
+rel_change <- abs(errors) / test_labels
+pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)   ## gives the count of those who are true on the condition of rel_change<25%
+##OR pred25 <- table(rel_change<0.25)["TRUE"] / nrow(test)
+
+pred10 <- sum((rel_change<0.10)=="TRUE")/nrow(test)  ## gives the count of those who are true on the condition of rel_change<10%
+
+pred5 <- sum((rel_change<0.05)=="TRUE")/nrow(test)  ## gives the count of those who are true on the condition of rel_change<5%
+
+pred1 <- sum((rel_change<0.01)=="TRUE")/nrow(test)  ## gives the count of those who are true on the condition of rel_change<1%
+
+paste("RMSE:", rmse)
+paste("Pred(25%):", pred25)
+paste("Pred(10%):", pred10)
+paste("Pred(5%):", pred5)
+paste("Pred(1%):", pred1)
+```
+
+###Re-creating the time series dataset for low stock price (of next day)
+```{r}
+data_ts<-data_n[,c(8,9)]
+data_ts$date <- as.Date(data_ts$date)
+```
+
+```{r}
+train_ts<-data_ts[1:(cut-1),]
+test_ts<-data_ts[cut:nrow(data_ts),]
+```
+
+###Plot
+```{r}
+test_ts$preds<- test_predEM
+ggplot(data = train_ts, aes(x = as.Date(date), y = low_price_next_day,color = "aquamarine3"))+
+  geom_line()+
+  geom_line(data = test_ts, aes(x = as.Date(date), y = low_price_next_day ,color="dodgerblue3"))+
+  geom_line(data = test_ts, aes(x = as.Date(date), y = preds,color="orangered3"))+
+  scale_color_identity(name = " ",
+                       breaks = c("aquamarine3", "dodgerblue3", "orangered3"),
+                       labels = c("Training", "Test", "Prediction"),
+                       guide = "legend")+
+  xlab("Time")+
+  ylab("Low Stock Price of Next Day")+
+  ggtitle("Low Stock Price (Next Day): Ensemble Model (RF&LR)") +
+  theme(plot.title = element_text(size=12, face = "bold"))
+```
+
+###Simple Moving Average (of last 250 low stock price)
+###Re-creating the time series dataset for low stock price
+```{r}
+data_ts<-data[,c(1,13)]
+data_ts$date = as.Date(data_ts$date)
+```
+
+```{r}
+train_ts<-data_ts[1:(cut-1),]
+test_ts<-data_ts[cut:nrow(data_ts),]
+```
+
+###Model and distribution of errors
+```{r}
+index<-nrow(test_ts)
+preds = 0
+for (i in 1:index)
+  {
+  a = sum(train_ts$low_mean[(nrow(train_ts)-index+i):(nrow(train_ts))]) + sum(preds)
+  b = a/index
+  preds[i] <- b
+}
+errors <- preds - test_ts$low_mean
+hist(errors)
+```
+###RMSE and cases with less than 25%, 10%, 5%, and 1% error
+```{r}
+rmse <- sqrt(mean((test_ts$low_mean - preds)^2))
+
+rel_change <- abs(errors) / test_ts$low_mean
+pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test_ts)   ## gives the count of those who are true on the condition of rel_change<25%
+##OR pred25 <- table(rel_change<0.25)["TRUE"] / nrow(test_ts)
+
+pred10 <- sum((rel_change<0.10)=="TRUE")/nrow(test_ts)  ## gives the count of those who are true on the condition of rel_change<10%
+
+pred5 <- sum((rel_change<0.05)=="TRUE")/nrow(test_ts)  ## gives the count of those who are true on the condition of rel_change<5%
+
+pred1 <- sum((rel_change<0.01)=="TRUE")/nrow(test_ts)  ## gives the count of those who are true on the condition of rel_change<1%
+
+paste("RMSE:", rmse)
+paste("Pred(25%):", pred25)
+paste("Pred(10%):", pred10)
+paste("Pred(5%):", pred5)
+paste("Pred(1%):", pred1)
+```
+
+###Plot
+```{r}
+test_ts$preds <- preds
+ggplot(data = train_ts, aes(x = as.Date(date), y = low_mean,color = "aquamarine3"))+
+  geom_line()+
+  geom_line(data = test_ts, aes(x = as.Date(date), y = low_mean ,color="dodgerblue3"))+
+  geom_line(data = test_ts, aes(x = as.Date(date), y = preds ,color="orangered3"))+
+  scale_color_identity(name = " ",
+                       breaks = c("aquamarine3", "dodgerblue3", "orangered3"),
+                       labels = c("Training", "Test", "Predictions"),
+                       guide = "legend")+
+  xlab("Time")+
+  ylab("Low Stock Price of Next Day")+
+  ggtitle("Low Stock Price (Next Day): Moving Average Method") +
+  theme(plot.title = element_text(size=12, face = "bold"))
+```
+
+###Auto-ARIMA
+###Re-creating the time series dataset for low stock price
+```{r}
+data_ts<-data[,c(1,13)]
+data_ts$date = as.Date(data_ts$date)
+```
+
+```{r}
+train_ts<-data_ts[1:(cut-1),]
+test_ts<-data_ts[cut:nrow(data_ts),]
+```
+
+###Model and distribution of errors
+```{r}
+#install.packages("forecast")
+library(forecast)
+ARIMAmodel <- auto.arima(train_ts$low_mean,
+                  max.p = 5,
+                  max.q = 5,
+                  max.P = 2,
+                  max.Q = 2,
+                  max.order = 5,
+                  max.d = 2,
+                  max.D = 1,
+                  start.p = 2,
+                  start.q = 2,
+                  start.P = 1,
+                  start.Q = 1,
+                  stationary = FALSE,
+                  seasonal = TRUE,
+                  ic = c("aicc", "aic", "bic"),
+                  stepwise = TRUE,
+                  nmodels = 100,
+                  trace = FALSE,
+                  method = NULL,
+                  truncate = NULL,
+                  test = c("kpss", "adf", "pp"),
+                  seasonal.test = c("seas", "ocsb", "hegy", "ch"),
+                  allowdrift = TRUE,
+                  lambda = NULL,
+                  biasadj = FALSE,
+                  parallel = FALSE)
+
+test_predARIMA<-predict(ARIMAmodel,n.ahead = nrow(test_ts))
+```
+
+
+```{r}
+test_predARIMA<- test_predARIMA$pred
+errors <- test_predARIMA - test_ts$low_mean
+hist(errors)
+```
+
+###RMSE and cases with less than 25%, 10%, 5%, and 1% error
+```{r}
+rmse <- sqrt(mean((test_ts$low_mean - test_predARIMA)^2))
+
+rel_change <- abs(errors) / test_ts$low_mean
+pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test_ts)   ## gives the count of those who are true on the condition of rel_change<25%
+##OR pred25 <- table(rel_change<0.25)["TRUE"] / nrow(test_ts)
+
+pred10 <- sum((rel_change<0.10)=="TRUE")/nrow(test_ts)  ## gives the count of those who are true on the condition of rel_change<10%
+
+pred5 <- sum((rel_change<0.05)=="TRUE")/nrow(test_ts)  ## gives the count of those who are true on the condition of rel_change<5%
+
+pred1 <- sum((rel_change<0.01)=="TRUE")/nrow(test_ts)  ## gives the count of those who are true on the condition of rel_change<1%
+
+paste("RMSE:", rmse)
+paste("Pred(25%):", pred25)
+paste("Pred(10%):", pred10)
+paste("Pred(5%):", pred5)
+paste("Pred(1%):", pred1)
+```
+
+
+###Plot
+```{r}
+test_ts$preds <- test_predARIMA
+ggplot(data = train_ts, aes(x = as.Date(date), y = low_mean,color = "aquamarine3"))+
+  geom_line()+
+  geom_line(data = test_ts, aes(x = as.Date(date), y = low_mean ,color="dodgerblue3"))+
+  geom_line(data = test_ts, aes(x = as.Date(date), y = preds,color="orangered3"))+
+  scale_color_identity(name = " ",
+                       breaks = c("aquamarine3", "dodgerblue3", "orangered3"),
+                       labels = c("Training", "Test", "Prediction"),
+                       guide = "legend")+
+  xlab("Time")+
+  ylab("Low Stock Price of Next Day")+
+  ggtitle("Low Stock Price (Next Day): ARIMA Method") +
+  theme(plot.title = element_text(size=12, face = "bold"))
+```
+
+One might ask why we cannot just average out the low stock price of the previous 2, 3, 5 days and go with it rather than engage in a "complex ML process". Averaging out the low stock values of the past 5 previous days seems reasonable and fair since the stock market operates only on weekdays (except holidays). Let's try and see. 
+
+###Average of Previous '5 Days' (of low stock price to predict next low stock price) Method
+###Re-creating the time series dataset for low stock price
+```{r}
+data_ts<-data[,c(1,13)]
+data_ts$date = as.Date(data_ts$date)
+```
+
+```{r}
+train_ts<-data_ts
+test_ts<-data_ts[6:nrow(data_ts),]
+```
+
+###Model and distribution of errors
+```{r}
+index<-nrow(test_ts)
+preds = 0
+for (i in 1:index)
+  {
+  a = sum(train_ts$low_mean[i:(i+4)])
+  b = a/5
+  preds[i] <- b
+}
+errors <- preds - test_ts$low_mean
+hist(errors)
+```
+
+###RMSE and cases with less than 25%, 10%, 5%, and 1% error
+```{r}
+rmse <- sqrt(mean((test_ts$low_mean - preds)^2))
+
+rel_change <- abs(errors) / test_ts$low_mean
+pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test_ts)   ## gives the count of those who are true on the condition of rel_change<25%
+##OR pred25 <- table(rel_change<0.25)["TRUE"] / nrow(test_ts)
+
+pred10 <- sum((rel_change<0.10)=="TRUE")/nrow(test_ts)  ## gives the count of those who are true on the condition of rel_change<10%
+
+pred5 <- sum((rel_change<0.05)=="TRUE")/nrow(test_ts)  ## gives the count of those who are true on the condition of rel_change<5%
+
+pred1 <- sum((rel_change<0.01)=="TRUE")/nrow(test_ts)  ## gives the count of those who are true on the condition of rel_change<1%
+
+paste("RMSE:", rmse)
+paste("Pred(25%):", pred25)
+paste("Pred(10%):", pred10)
+paste("Pred(5%):", pred5)
+paste("Pred(1%):", pred1)
+```
+
+###Plot
+```{r}
+test_ts$preds <- preds
+ggplot(data = test_ts, aes(x = as.Date(date), y = low_mean,color = "aquamarine3"))+
+  geom_line()+
+  geom_line(data = test_ts, aes(x = as.Date(date), y = preds ,color="orangered3"))+
+  scale_color_identity(name = " ",
+                       breaks = c("aquamarine3", "orangered3"),
+                       labels = c("Training/Test", "Predictions"),
+                       guide = "legend")+
+  xlab("Time")+
+  ylab("Low Stock Price of Next Day")+
+  ggtitle("Low Stock Price (Next Day): Average of Previous '5 Days'  Method") +
+  theme(plot.title = element_text(size=12, face = "bold"))
+```
+Averaging out the low stock price registered on the five previous days seems to perform poorly when there is a sharp change.
+
+
+# question 2
+# question 2 part 1:  Are there changes in the types of drugs sold in the years after Trump was elected? 
+## data cleaning  
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(rcompanion)
+library(MASS)# stepwise regression
+library(randomForest) 
+library(leaps) # all subsets regression
+library(corrplot)
+library(caret)
+library(FNN)
+library(mlbench)
+library(lattice)
+library(class)
+library(gmodels)
+library(mice)
+```
+
+```{r}
+#run this first
+# Pharma sales dataset
+#do linear regression to check of correlation for between and within years
+weeklypharma<-read.csv("salesweekly.csv")
+colnames(weeklypharma)
+colnames(weeklypharma)<-c("Date","Med4RheumArth","Med4OstArth","Aspirin","Ibuprofen",
+                          "Med4Tension","Med4Sleep","Med4Asthma","Med4Allergy")
+str(weeklypharma)
+#convert to date time object
+weeklypharma$Date<-mdy(weeklypharma$Date)
+
+#Obama year sales
+pharma201415<-weeklypharma
+pharma201415 <- 
+  pharma201415 %>% 
+  filter(between(Date,as.Date("2014-01-01"), as.Date("2015-12-31"))) 
+
+#Trump year sales
+pharma201718<-weeklypharma
+pharma201718 <- 
+  pharma201718 %>% 
+  filter(between(Date,as.Date("2017-01-01"), as.Date("2018-12-31")))
+
+#election year sales
+pharma2016<-weeklypharma
+pharma2016 <- 
+  pharma2016 %>% 
+  filter(between(Date,as.Date("2016-01-01"), as.Date("2016-12-31")))
+```
+
+```{r obama data exploration and transformation for linear reg}
+# first, load cleaned datasets from FinalProjectDataCleaning
+obamapharma<-pharma201415[,-1]
+correlationMatrix <- cor(obamapharma, method = "pearson")
+correlationMatrix
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corrplot(correlationMatrix, method="color", col=col(200),type="upper", order="hclust")
+# MEdicine are not highly correlated (all meds were 0.4 or under) with each other therefore each no med was dropped. 
+colnames(pharma201415)
+str(pharma201415)
+library(e1071)                    # load e1071 
+skewness(pharma201415$Med4Sleep)
+#plotNormalHistogram(pharma201415$Meds4Allergy)
+#no missing values in the phamadata
+#med4rheumarth skewness is 0.1803
+#med4ostarth skew is -0.025
+#med4sleep skew is 0.897, rskew
+#med4asthma skew is 0.97, r skew
+#med4allergy skew is 0.9579, rskew
+#med4tension is 0.793, rskew
+#ibuprofen is 0.79731, rskew
+#aspirin is 0.5888, right skewed
+#6/8 variables are right skewed, log transformation is done
+#("Date","Med4RheumArth","Med4OstArth"," Aspirin","Ibuprofen"," Med4Tension","Med4Sleep","Meds4Asthma","Meds4Allergy")
+
+#log transformations required, add small coefficient (0.5) to prevent log of 0
+#do them individually so that the dataframe isnt spliced
+dolog<-function(x){
+  log(x+1)
+}
+t201415<-pharma201415
+t201415[2:9]<-lapply(t201415[2:9],dolog)#logtransformed
+
+```
+
+###Stepwise Feature Selection for obama era
+Since none of them were correlated, hard to know which features are best predictors of independent variables
+```{r feature selection for rheumatoid arthritis meds}
+fullobamarh <- lm(Med4RheumArth~., data= t201415)  ## . means all the IVs
+nullobamarh <- lm(Med4RheumArth~1,data=t201415)
+stepobamarh <- stepAIC(nullobamarh, scope=list(lower=nullobamarh, upper=fullobamarh), direction= "both", trace=FALSE)
+summary(stepobamarh) 
+```
+
+```{r feature selection for osteo arthritis meds}
+fullobamaost <- lm(Med4OstArth~., data= t201415)  ## . means all the IVs
+nullobamaost <- lm(Med4OstArth~1,data=t201415)
+stepobamaost <- stepAIC(nullobamaost, scope=list(lower=nullobamaost, upper=fullobamaost), direction= "both", trace=FALSE)
+summary(stepobamaost) 
+
+```
+
+```{r feature selection for aspirin}
+fullobamaasp <- lm(Aspirin~., data= t201415)  ## . means all the IVs
+nullobamaasp <- lm(Aspirin~1,data=t201415)
+stepobamaasp <- stepAIC(nullobamaasp, scope=list(lower=nullobamaasp, upper=fullobamaasp), direction= "both", trace=FALSE)
+summary(stepobamaasp) 
+```
+
+```{r feature selection for ibuprofen}
+fullobamaib <- lm(Ibuprofen~., data= t201415)  ## . means all the IVs
+nullobamaib <- lm(Ibuprofen~1,data=t201415)
+stepobamaib <- stepAIC(nullobamaib, scope=list(lower=nullobamaib, upper=fullobamaib), direction= "both", trace=FALSE)
+summary(stepobamaib) 
+
+```
+
+```{r feature selection for tension medicine}
+fullobamaten <- lm(Med4Tension~., data= t201415)  ## . means all the IVs
+nullobamaten <- lm(Med4Tension~1,data=t201415)
+stepobamaten <- stepAIC(nullobamaten, scope=list(lower=nullobamaten, upper=fullobamaten), direction= "both", trace=FALSE)
+summary(stepobamaten) 
+```
+
+```{r feature selection for sleep medicine}
+fullobamaslp <- lm(Med4Sleep~., data= t201415)  ## . means all the IVs
+nullobamaslp <- lm(Med4Sleep~1,data=t201415)
+stepobamaslp <- stepAIC(nullobamaslp, scope=list(lower=nullobamaslp, upper=fullobamaslp), direction= "both", trace=FALSE)
+summary(stepobamaslp) 
+```
+
+```{r feature selection for asthma medicine}
+fullobamaast <- lm(Med4Asthma~., data= t201415)  ## . means all the IVs
+nullobamaast <- lm(Med4Asthma~1,data=t201415)
+stepobamaast <- stepAIC(nullobamaast, scope=list(lower=nullobamaast, upper=fullobamaast), direction= "both", trace=FALSE)
+summary(stepobamaast) 
+```
+
+```{r feature selection for allergy medicine}
+fullobamaall <- lm(Med4Allergy~., data= t201415)  ## . means all the IVs
+nullobamaall <- lm(Med4Allergy~1,data=t201415)
+stepobamaall <- stepAIC(nullobamaall, scope=list(lower=nullobamaall, upper=fullobamaall), direction= "both", trace=FALSE)
+summary(stepobamaall) 
+```
+
+### Trump era medicines Stepwise Feature Selection
+Since none of them were correlated, hard to know which features are best predictors of independent variables
+```{r feature selection for rheumatoid arthritis meds}
+fulltrumprh <- lm(Med4RheumArth~., data= t201718)  ## . means all the IVs
+nulltrumprh <- lm(Med4RheumArth~1,data=t201718)
+steptrumprh <- stepAIC(nulltrumprh, scope=list(lower=nulltrumprh, upper=fulltrumprh), direction= "both", trace=FALSE)
+summary(steptrumprh) 
+```
+
+```{r feature selection for osteo arthritis meds}
+fulltrumpost <- lm(Med4OstArth~., data= t201718)  ## . means all the IVs
+nulltrumpost <- lm(Med4OstArth~1,data=t201718)
+steptrumpost <- stepAIC(nulltrumpost, scope=list(lower=nulltrumpost, upper=fulltrumpost), direction= "both", trace=FALSE)
+summary(steptrumpost) 
+
+```
+
+```{r feature selection for aspirin}
+fulltrumpasp <- lm(Aspirin~., data= t201718)  ## . means all the IVs
+nulltrumpasp <- lm(Aspirin~1,data=t201718)
+steptrumpasp <- stepAIC(nulltrumpasp, scope=list(lower=nulltrumpasp, upper=fulltrumpasp), direction= "both", trace=FALSE)
+summary(steptrumpasp) 
+```
+
+```{r feature selection for ibuprofen}
+fulltrumpib <- lm(Ibuprofen~., data= t201718)  ## . means all the IVs
+nulltrumpib <- lm(Ibuprofen~1,data=t201718)
+steptrumpib <- stepAIC(nulltrumpib, scope=list(lower=nulltrumpib, upper=fulltrumpib), direction= "both", trace=FALSE)
+summary(steptrumpib) 
+
+```
+
+```{r feature selection for tension medicine}
+fulltrumpten <- lm(Med4Tension~., data= t201718)  ## . means all the IVs
+nulltrumpten <- lm(Med4Tension~1,data=t201718)
+steptrumpten <- stepAIC(nullobamaten, scope=list(lower=nulltrumpten, upper=fulltrumpten), direction= "both", trace=FALSE)
+summary(steptrumpten) 
+```
+
+```{r feature selection for sleep medicine}
+fulltrumpslp <- lm(Med4Sleep~., data= t201718)  ## . means all the IVs
+nulltrumpslp <- lm(Med4Sleep~1,data=t201718)
+steptrumpslp <- stepAIC(nulltrumpslp, scope=list(lower=nulltrumpslp, upper=fulltrumpslp), direction= "both", trace=FALSE)
+summary(steptrumpslp) 
+```
+
+```{r feature selection for asthma medicine}
+fulltrumpast <- lm(Med4Asthma~., data= t201718)  ## . means all the IVs
+nulltrumpast <- lm(Med4Asthma~1,data=t201718)
+steptrumpast <- stepAIC(nulltrumpast, scope=list(lower=nulltrumpast, upper=fulltrumpast), direction= "both", trace=FALSE)
+summary(steptrumpast) 
+```
+
+```{r feature selection for allergy medicine}
+fulltrumpall <- lm(Med4Allergy~., data= t201718)  ## . means all the IVs
+nulltrumpall <- lm(Med4Allergy~1,data=t201718)
+steptrumpall <- stepAIC(nulltrumpall, scope=list(lower=nulltrumpall, upper=fulltrumpall), direction= "both", trace=FALSE)
+summary(steptrumpall) 
+```
+
+NOTES: stepwise regression was done for weekly on the time periods 201415 and 201718. for the 201415 period, 5/8 meds had date as significant but only 1/8 meds had date as signifcant for trump era.
+
+### Question 2 part 1 Training and testing 2014-2015 models to make sure model gives back good metrics before testing on other data
+
+```{r traintest split }
+#linear reg train test split
+set.seed(111)
+rn_train <- sample(nrow(t201415), floor(nrow(t201415)*0.7))
+obamatrain70<-t201415[rn_train,]
+obamatest<-t201415[-rn_train,]
+
+
+```
+
+Using Linear Regression to train 70% 201415 data and test 30% on 20142015
+rheumArth, Aspirin,Ibuprofen,Sleep Med and Allergy Med had date be a significant feature so only those 5 meds were used for training and test.
+
+```{r linear model for rheum arthritis}
+ObamaRheumModel<-lm(Med4RheumArth~Date, data=obamatrain70) 
+ObamaRheumPrediction <- predict(ObamaRheumModel, newdata =obamatest) 
+ObamaRheumErrors <- ObamaRheumPrediction - obamatest$Med4RheumArth
+hist(ObamaRheumErrors)
+ObamaRheumRmse <- sqrt(mean((obamatest$Med4RheumArth - ObamaRheumPrediction)^2))
+ObamaRheumRel_change <- abs(ObamaRheumErrors) / obamatest$Med4RheumArth
+ObamaRheumPred10 <- table(ObamaRheumRel_change<0.10)["TRUE"] / nrow(obamatest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+ObamaRheumPred25 <- table(ObamaRheumRel_change<0.25)["TRUE"] / nrow(obamatest)
+
+paste("2014-2015 model for Rheumatoid Arthritis Meds")
+paste("RMSE:", ObamaRheumRmse)
+paste("PRED(10):", round(ObamaRheumPred10,2))
+paste("PRED(25):", round(ObamaRheumPred25,2))
+paste("Summary of Prediction")
+summary(ObamaRheumPrediction)
+
+
+#88%of values are within 10% of the actual values, 100% of values are within 25% of actualvalues and there is a very low RMSE(0.178) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for Aspirin}
+ObamaAspModel<-lm(Aspirin~Date, data=obamatrain70) 
+ObamaAspPrediction <- predict(ObamaAspModel, newdata =obamatest) 
+ObamaAspErrors <- ObamaAspPrediction - obamatest$Aspirin
+hist(ObamaAspErrors)
+ObamaAspRmse <- sqrt(mean((obamatest$Aspirin - ObamaAspPrediction)^2))
+ObamaAspRel_change <- abs(ObamaAspErrors) / obamatest$Aspirin
+
+ObamaAspPred10 <- table(ObamaAspRel_change<0.10)["TRUE"] / nrow(obamatest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+ObamaAspPred25 <- table(ObamaAspRel_change<0.25)["TRUE"] / nrow(obamatest)
+
+paste("2014-2015 model for Aspirin")
+paste("RMSE:", ObamaAspRmse)
+paste("PRED(10):", round(ObamaAspPred10,2))
+paste("PRED(25):", round(ObamaAspPred25,2))
+paste("Summary of Prediction")
+summary(ObamaAspPrediction)
+
+#within 201415
+#88% of values are within 10% of the actual values and 100% of values are within 25% of actual values there is a very low RMSE(0.243) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for Ibuprofen}
+
+ObamaIbModel<-lm(Ibuprofen~Date, data=obamatrain70) 
+ObamaIbPrediction <- predict(ObamaIbModel, newdata =obamatest) 
+ObamaIbErrors <- ObamaIbPrediction - obamatest$Ibuprofen
+hist(ObamaIbErrors)
+ObamaIbRmse <- sqrt(mean((obamatest$Ibuprofen - ObamaIbPrediction)^2))
+ObamaIbRel_change <- abs(ObamaIbErrors) / obamatest$Ibuprofen
+ObamaIbPred10 <- table(ObamaIbRel_change<0.10)["TRUE"] / nrow(obamatest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+ObamaIbPred25 <- table(ObamaIbRel_change<0.25)["TRUE"] / nrow(obamatest)
+
+paste("2014-2015 model for Ibuprofen")
+paste("RMSE:", ObamaIbRmse)
+paste("PRED(10):", round(ObamaIbPred10,2))
+paste("PRED(25):", round(ObamaIbPred25,2))
+paste("Summary of Prediction")
+summary(ObamaIbPrediction)
+#within201415
+
+#88%of values are within 10% of the actual values and 100% of values fall within 25% of actual values (match 100%) and there is a very low RMSE(0.283) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for sleep med}
+ObamaSlpModel<-lm(Med4Sleep~Date, data=obamatrain70) 
+ObamaSlpPrediction <- predict(ObamaSlpModel, newdata =obamatest) 
+ObamaSlpErrors <- ObamaSlpPrediction - obamatest$Med4Sleep
+hist(ObamaSlpErrors)
+ObamaSlpRmse <- sqrt(mean((obamatest$Med4Sleep - ObamaSlpPrediction)^2))
+ObamaSlpRel_change <- abs(ObamaSlpErrors) / obamatest$Med4Sleep
+ObamaSlpPred10 <- table(ObamaSlpRel_change<0.10)["TRUE"] / nrow(obamatest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+ObamaSlpPred25 <- table(ObamaSlpRel_change<0.25)["TRUE"] / nrow(obamatest)
+
+paste("2014-2015 model for Sleep Meds")
+paste("RMSE:", ObamaSlpRmse)
+paste("PRED(10):", round(ObamaSlpPred10,2))
+paste("PRED(25):", round(ObamaSlpPred25,2))
+paste("Summary of Prediction")
+summary(ObamaSlpPrediction)
+
+#22%of values are within 10% of the actual values, 66% fall within 25% of the actual values and there is a very moderate RMSE(0.65) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for allergymed}
+
+ObamaAllModel<-lm(Med4Allergy~Date, data=obamatrain70) 
+ObamaAllPrediction <- predict(ObamaAllModel, newdata =obamatest) 
+ObamaAllErrors <- ObamaAllPrediction - obamatest$Med4Allergy
+hist(ObamaAllErrors)
+ObamaAllRmse <- sqrt(mean((obamatest$Med4Allergy - ObamaAllPrediction)^2))
+ObamaAllRel_change <- abs(ObamaAllErrors) / obamatest$Med4Allergy
+ObamaAllPred10 <- table(ObamaAllRel_change<0.10)["TRUE"] / nrow(obamatest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+ObamaAllPred25 <- table(ObamaAllRel_change<0.25)["TRUE"] / nrow(obamatest)
+paste("2014-2015 model for Allergy Meds")
+paste("RMSE:", ObamaAllRmse)
+paste("PRED(10):", round(ObamaAllPred10,2))
+paste("PRED(25):", round(ObamaAllPred25,2))
+paste("Summary of Prediction")
+summary(ObamaAllPrediction)
+#41%of values are within 10% of the actual values, 81.25% are within 25% of actual values and there is a very low RMSE(0.54) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+
+###Obama train, trump test model
+###Obama train, trump test
+
+Using Linear Regression to train 201415 data and test on 201718.
+rheumArth, Aspirin,Ibuprofen,Sleep Med and Allergy Med had date be a significant feature so only those 5 meds were used for training and test.
+
+
+```{r traintest split }
+#linear reg train test split
+#rn_train <- sample(nrow(t201415), floor(nrow(t201415)*0.7))
+#obamatrain<-t20142015[rn_train,]
+#obamatest<-t20142015[-rn_train,]
+
+obamatrain<-t201415
+trumptest<-t201718[-1,]#to keep the number of observations the same
+# to reset index rownames(trumptest)<-NULL
+
+```
+
+```{r linear model for rheum arthritis}
+OTRheumModel<-lm(Med4RheumArth~Date, data=obamatrain) 
+OTRheumPrediction <- predict(OTRheumModel, newdata =trumptest) 
+OTRheumErrors <- OTRheumPrediction - trumptest$Med4RheumArth
+hist(OTRheumErrors)
+OTRheumRmse <- sqrt(mean((trumptest$Med4RheumArth - OTRheumPrediction)^2))
+OTRheumRel_change <- abs(OTRheumErrors) / trumptest$Med4RheumArth
+OTRheumPred10 <- table(OTRheumRel_change<0.10)["TRUE"] / nrow(trumptest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+OTRheumPred25 <- table(OTRheumRel_change<0.25)["TRUE"] / nrow(trumptest)
+paste("TrumpTest: Rheumatoid Athritis Med")
+paste("RMSE:", OTRheumRmse)
+paste("PRED(10):", round(OTRheumPred10,2))
+paste("PRED(25):", round(OTRheumPred25,2))
+paste("Summary of Prediction")
+summary(OTRheumPrediction)
+plot(OTRheumErrors)
+plot(fitted(OTRheumModel), resid(OTRheumModel))
+#91%of values are within 10% of the actual values, 100% of values are within 25% of actualvalues and there is a very low RMSE(0.178) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for Aspirin}
+OTAspModel<-lm(Aspirin~Date, data=obamatrain) 
+OTAspPrediction <- predict(OTAspModel, newdata=trumptest) 
+OTAspErrors <- OTAspPrediction - trumptest$Aspirin
+hist(OTAspErrors)
+OTAspRmse <- sqrt(mean((trumptest$Aspirin - OTAspPrediction)^2))
+OTAspRel_change <- abs(OTAspErrors) / trumptest$Aspirin
+
+OTAspPred10 <- table(OTAspRel_change<0.10)["TRUE"] / nrow(trumptest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+OTAspPred25 <- table(OTAspRel_change<0.25)["TRUE"] / nrow(trumptest)
+paste("TrumpTest: Aspirin")
+paste("RMSE:", OTAspRmse)
+paste("PRED(10):", round(OTAspPred10,2))
+paste("PRED(25):", round(OTAspPred25,2))
+paste("Summary of Prediction")
+summary(OTAspPrediction)
+
+#60% of values are within 10% of the actual values and 91% of values are within 25% of actual values there is a very low RMSE(0.243) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for Ibuprofen}
+
+OTIbModel<-lm(Ibuprofen~Date, data=obamatrain) 
+OTIbPrediction <- predict(OTIbModel, newdata =trumptest) 
+OTIbErrors <- OTIbPrediction - trumptest$Ibuprofen
+hist(OTIbErrors)
+OTIbRmse <- sqrt(mean((trumptest$Ibuprofen - OTIbPrediction)^2))
+OTIbRel_change <- abs(OTIbErrors) / trumptest$Ibuprofen
+OTIbPred10 <- table(OTIbRel_change<0.10)["TRUE"] / nrow(trumptest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+OTIbPred25 <- table(OTIbRel_change<0.25)["TRUE"] / nrow(trumptest)
+
+paste("TrumpTest: Ibuprofen")
+paste("RMSE:", OTIbRmse)
+paste("PRED(10):", round(OTIbPred10,2))
+paste("PRED(25):", round(OTIbPred25,2))
+paste("Summary of Prediction")
+summary(OTIbPrediction)
+
+
+# 26% of predicted values fall within 25% of actual values . 91%of values are within 25% of the actual values and there is a very low RMSE(0.283) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for sleep med}
+
+OTSlpModel<-lm(Med4Sleep~Date, data=obamatrain) 
+OTSlpPrediction <- predict(OTSlpModel, newdata=trumptest) 
+OTSlpErrors <- OTSlpPrediction - trumptest$Med4Sleep
+hist(OTSlpErrors)
+OTSlpRmse <- sqrt(mean((trumptest$Med4Sleep - OTSlpPrediction)^2))
+OTSlpRel_change <- abs(OTSlpErrors) / trumptest$Med4Sleep
+OTSlpPred10 <- table(OTSlpRel_change<0.10)["TRUE"] / nrow(trumptest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+OTSlpPred25 <- table(OTSlpRel_change<0.25)["TRUE"] / nrow(trumptest)
+
+paste("TrumpTest: Sleep Medicine")
+paste("RMSE:", OTSlpRmse)
+paste("PRED(10):", round(OTSlpPred10,2))
+paste("PRED(25):", round(OTSlpPred25,2))
+paste("Summary of Prediction")
+summary(OTSlpPrediction)
+
+#None of the values are within 10% of the actual values, 2% fall within 25% of the actual values and there is an RMSE 1.25 which is very high which may indicate that the sales of medicines follows a certain pattern.
+```
+
+```{r linear model for allergymed}
+
+OTAllModel<-lm(Med4Allergy~Date, data=obamatrain) 
+OTAllPrediction <- predict(OTAllModel, newdata =trumptest) 
+OTAllErrors <- OTAllPrediction - trumptest$Med4Allergy
+hist(OTAllErrors)
+OTAllRmse <- sqrt(mean((trumptest$Med4Allergy - OTAllPrediction)^2))
+OTAllRel_change <- abs(OTAllErrors) / trumptest$Med4Allergy
+OTAllPred10 <- table(OTAllRel_change<0.10)["TRUE"] / nrow(trumptest)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+OTAllPred25 <- table(OTAllRel_change<0.25)["TRUE"] / nrow(trumptest)
+
+paste("TrumpTest: Allergy Medicine")
+paste("RMSE:", OTAllRmse)
+paste("PRED(10):", round(OTAllPred10,2))
+paste("PRED(25):", round(OTAllPred25,2))
+paste("Summary of Predictions")
+summary(OTAllPrediction)
+
+#41%of values are within 10% of the actual values, 81.25% are within 25% of actual values and there is a very low RMSE(0.54) which may indicate that the sales of medicines follows a certain pattern.
+```
+
+
+
+# question 2 part 2: Additionally, are there general changes in the overall financial standing of the pharmaceutical industry between 2014 and 2018?  
+## Regression and Classification methods were used for this question
+
+
+### data cleaning for Muliple linear regression and KNN
+
+
+#### Load Financial Indicators dataset
+```{r}
+fin2014 <- read.csv("/Users/aselkushkeyeva/Desktop/Year2/Fall2020/INF2167AppliedDataScienceUsingR/FinalProject/200FinIndicatorsUSstocks/2014_Financial_Data.csv")
+fin2015 <- read.csv("/Users/aselkushkeyeva/Desktop/Year2/Fall2020/INF2167AppliedDataScienceUsingR/FinalProject/200FinIndicatorsUSstocks/2015_Financial_Data.csv")
+fin2016 <- read.csv("/Users/aselkushkeyeva/Desktop/Year2/Fall2020/INF2167AppliedDataScienceUsingR/FinalProject/200FinIndicatorsUSstocks/2016_Financial_Data.csv")
+fin2017 <- read.csv("/Users/aselkushkeyeva/Desktop/Year2/Fall2020/INF2167AppliedDataScienceUsingR/FinalProject/200FinIndicatorsUSstocks/2017_Financial_Data.csv")
+fin2018 <- read.csv("/Users/aselkushkeyeva/Desktop/Year2/Fall2020/INF2167AppliedDataScienceUsingR/FinalProject/200FinIndicatorsUSstocks/2018_Financial_Data.csv")
+```
+
+#### Merge the datasets
+```{r}
+#rename the non-matching column to merge the datasets
+fin2014$X201X.PRICE.VAR.... <- fin2014$X2015.PRICE.VAR.... 
+fin2015$X201X.PRICE.VAR.... <- fin2015$X2016.PRICE.VAR....
+fin2016$X201X.PRICE.VAR.... <- fin2016$X2017.PRICE.VAR....
+fin2017$X201X.PRICE.VAR.... <- fin2017$X2018.PRICE.VAR....
+fin2018$X201X.PRICE.VAR.... <- fin2018$X2019.PRICE.VAR....
+
+#Remove the original non-matching columns
+fin2014 <- fin2014[, -224]
+fin2015 <- fin2015[, -224]
+fin2016 <- fin2016[, -224]
+fin2017 <- fin2017[, -224]
+fin2018 <- fin2018[, -224]
+
+# Add Year column in each dataset
+fin2014$year <- c(2014)
+fin2015$year <- c(2015)
+fin2016$year <- c(2016)
+fin2017$year <- c(2017)
+fin2018$year <- c(2018)
+
+#Merge the datasets
+fin2014_2015_obama <- rbind(fin2014,fin2015)
+fin2017_2018_trump <- rbind(fin2017,fin2018)
+```
+
+
+#### Load pharma stock tickers datasets and merge into one.
+https://topforeignstocks.com/stock-lists/the-complete-list-of-biotech-stocks-trading-on-nasdaq/
+https://topforeignstocks.com/stock-lists/the-complete-list-of-major-pharmaceutical-stocks-on-the-nyse/
+
+```{r}
+stock_tickers <- read.csv("/Users/aselkushkeyeva/Downloads/list_major_pharma.csv")
+stock_tickers <- stock_tickers[-48,] 
+
+stock_tickers2 <- read.csv("/Users/aselkushkeyeva/Downloads/list_biotech.csv")
+stock_tickers2 <- stock_tickers2[-718,]
+stock_tickers2 <- stock_tickers2[, -c(4:14)]
+
+tickers <- rbind(stock_tickers, stock_tickers2)
+
+```
+
+
+#### make X common and pharmaceuticals in 2014_2015 and 2017_2018 on all sectors data (not subsetted to Healthcare) 
+```{r}
+
+# Create a dummy variable to check if X is in tickers dataset created in the previous chunk:
+fin2014_2015_obama$X_ph <- ifelse(fin2014_2015_obama$X %in% tickers$Ticker, 1, 0)
+fin2017_2018_trump$X_ph <- ifelse(fin2017_2018_trump$X %in% tickers$Ticker, 1, 0)
+
+#Filter pharmaceuticals:
+obama_pharma <- fin2014_2015_obama %>% filter(X_ph == 1)
+trump_pharma <- fin2017_2018_trump %>% filter(X_ph == 1)
+
+# Find common X for pharmaceuticals because obama_pharma and trump_pharma are of different number of rows:
+com <- intersect(obama_pharma$X, trump_pharma$X)
+# Create yet another dummy variable to check if X is common:
+obama_pharma$X_2 <- ifelse(obama_pharma$X %in% com, 1, 0)
+trump_pharma$X_2 <- ifelse(trump_pharma$X %in% com, 1, 0)
+
+#Filter common Xs:
+obama_pharma <- obama_pharma %>% filter(X_2 == 1)
+trump_pharma <- trump_pharma %>% filter(X_2 == 1)
+
+```
+
+## OBAMA DATA
+
+Some data cleaning:
+
+```{r}
+
+# change all columns class into factor and remove the columns with 1 level factor
+
+obama_ph_fac <- obama_pharma %>% mutate_if(is.numeric,as.factor)
+obama_ph_fac<-obama_ph_fac[, sapply(obama_ph_fac, nlevels) > 1]
+
+# change them back into numeric:
+obama_ph_num <- obama_ph_fac %>% mutate_if(is.factor,as.numeric)
+
+#impute NAs with mean :
+
+for(i in 1:ncol(obama_ph_num)) {
+  obama_ph_num[ , i][is.na(obama_ph_num[ , i])] <- mean(obama_ph_num[ , i], na.rm = TRUE)
+}
+
+```
+#### Correlation analysis for Obama dataset
+
+```{r}
+ob_corrMat <- cor(obama_ph_num, method = "pearson") 
+
+```
+
+```{r}
+library(RCurl) # getURL 
+library(leaps) # all subsets regression
+library(corrplot)
+library(caret)
+library(FNN)
+library(mlbench)
+# remove highly correlated
+ob_highlyCorr <- findCorrelation(ob_corrMat, cutoff=0.75)
+print(ob_highlyCorr)
+ob_noncor <- obama_ph_num[,-ob_highlyCorr]  #keep only those not highly correlated
+dim(ob_noncor)    ### 113 vars after highly correlated vars are removed + 1 var added below
+# correlationMatrix2 <- cor(noncor, method = "pearson")  ### only numeric vars
+# correlationMatrix2
+
+ob_noncor$X201X.PRICE.VAR.... <- obama_ph_num$X201X.PRICE.VAR....
+dim(ob_noncor) 
+```
+
+#### Normalizing the dataset
+
+```{r}
+normalize <- function(x) {
+               return ((x - min(x)) / (max(x) - min(x))) }
+ob_noncor_norm <- as.data.frame(lapply(ob_noncor, normalize))
+```
+
+
+
+## TRUMP DATA
+
+Some data cleaning:
+
+```{r}
+
+# change all columns class into factor and remove the columns with 1 level factor
+
+trump_ph_fac <- trump_pharma %>% mutate_if(is.numeric,as.factor)
+trump_ph_fac<-trump_ph_fac[, sapply(trump_ph_fac, nlevels) > 1]
+
+# change them back into numeric:
+trump_ph_num <- trump_ph_fac %>% mutate_if(is.factor,as.numeric)
+
+#impute NAs with mean :
+
+for(i in 1:ncol(trump_ph_num)) {
+  trump_ph_num[ , i][is.na(trump_ph_num[ , i])] <- mean(trump_ph_num[ , i], na.rm = TRUE)
+}
+
+```
+#### Correlation analysis for Trump Dataset
+
+```{r}
+tr_corrMat <- cor(trump_ph_num, method = "pearson") 
+
+```
+
+```{r}
+library(RCurl)
+library(leaps)
+library(corrplot)
+library(caret)
+library(FNN)
+library(mlbench)
+# remove highly correlated
+tr_highlyCorr <- findCorrelation(tr_corrMat, cutoff=0.75)
+tr_noncor <- trump_ph_num[,-ob_highlyCorr] 
+dim(tr_noncor)    ### 113 vars after highly correlated vars are removed + 1 var added below
+
+
+tr_noncor$X201X.PRICE.VAR.... <- trump_ph_num$X201X.PRICE.VAR....
+dim(tr_noncor) 
+```
+
+
+# Regression Models
+#### Forward selection method on Obama data
+```{r}
+ob_norm <- ob_noncor_norm
+ob_norm $X201X.PRICE.VAR.... <- NULL
+library(MASS)
+
+full_obama <- lm(Class~., data= ob_norm)
+null_obama <- lm(Class~1,data=ob_norm)
+stepF_obama <- stepAIC(null_obama, scope=list(lower=null_obama, upper=full_obama), direction= "forward")
+summary(stepF_obama)
+```
+
+
+#### Obama Multiple linear regression
+
+```{r}
+set.seed(1)
+lm_rn_train <- sample(nrow(ob_noncor_norm), floor(nrow(ob_noncor_norm)*0.7))
+lm_train <- ob_noncor_norm[lm_rn_train,]
+lm_test <- ob_noncor_norm[-lm_rn_train,]
+```
+
+
+```{r}
+ob_model_mlr <- lm(X201X.PRICE.VAR....~., data=lm_train) 
+#summary(ob_model_mlr)
+lm_prediction <- predict(ob_model_mlr, newdata =lm_test)  
+```
+
+```{r}
+lm_errors <- lm_prediction - lm_test$X201X.PRICE.VAR....
+hist(lm_errors)
+plot(lm_prediction, lm_test$X201X.PRICE.VAR....)
+```
+
+```{r}
+lm_rmse <- sqrt(mean((lm_test$X201X.PRICE.VAR.... - lm_prediction)^2))
+
+lm_rel_change <- abs(lm_errors) / lm_test$X201X.PRICE.VAR....
+lm_pred25 <- table(lm_rel_change<0.25)["TRUE"] / nrow(lm_test)
+lm_pred25
+paste("RMSE:", lm_rmse)
+paste("PRED(25):", round(lm_pred25,2))
+
+#results:
+#     TRUE 
+# 0.4618474 
+# [1] "RMSE: 0.164229465213062"
+# [1] "PRED(25): 0.46"
+
+```
+
+#### Trump Multiple linear regression
+
+```{r}
+ #set.seed(1)
+#lm_rn_train <- sample(nrow(ob_noncor_norm), floor(nrow(ob_noncor_norm)*0.7))
+fin_lm_train <- ob_noncor_norm
+fin_lm_test <- tr_noncor_norm
+```
+
+
+```{r}
+final_model_mlr <- lm(X201X.PRICE.VAR....~., data=fin_lm_train) 
+fin_lm_prediction <- predict(final_model_mlr, newdata =fin_lm_test)  
+```
+
+```{r}
+fin_lm_errors <- fin_lm_prediction - fin_lm_test$X201X.PRICE.VAR....
+#hist(lm_errors)
+```
+
+Root mean square error and find the percentage of cases with less than 25% error.
+```{r}
+fin_lm_rmse <- sqrt(mean((fin_lm_test$X201X.PRICE.VAR.... - fin_lm_prediction)^2))
+
+fin_lm_rel_change <- abs(fin_lm_errors) / fin_lm_test$X201X.PRICE.VAR....
+fin_lm_pred25 <- table(fin_lm_rel_change<0.25)["TRUE"] / nrow(fin_lm_test)  ## gives the count of those who are true on the condition of rel_change<0.25
+##OR pred25 <- sum((rel_change<0.25)=="TRUE")/nrow(test)
+fin_lm_pred25
+paste("RMSE:", fin_lm_rmse)
+paste("PRED(25):", round(fin_lm_pred25,2))
+
+```
+
+# KNN Models
+#### Obama KNN model
+
+```{r}
+#divide into train and test
+set.seed(1)
+ob_rn_train <- sample(nrow(ob_noncor_norm), floor(nrow(ob_noncor_norm)*0.7))  #create train and test data sets
+ob_train <- ob_noncor_norm[ob_rn_train,]  
+ob_test <- ob_noncor_norm[-ob_rn_train,]
+ob_train_labelsKNN <- ob_train[,114]   ##DV in the training set
+ob_test_labelsKNN <- ob_test[,114]     ##DV in the test set
+ob_train_KNN <- ob_train[,-114]   ##Only keep IV in the training set
+ob_test_KNN <- ob_test[,-114]     ##Only keep IV in the test set
+```
+ 
+best value of K is 8:
+```{r} 
+x <- 0
+for (i in 1:sqrt(nrow(ob_train)))   #try 1:11 to see the elbow clearly
+{
+set.seed(1)
+ob_KNNmodel <- knn.reg(train =ob_train_KNN , test = ob_test_KNN, y = ob_train_labelsKNN , k = i)  
+ob_predicted <- ob_KNNmodel$pred
+  
+ob_rmse <- sqrt(mean((ob_test_labelsKNN-ob_predicted)^2))
+x[i] <- ob_rmse
+print(paste(i,ob_rmse))  ##only for the sake of the example
+}
+
+plot(x, type="l", col="red")
+which.min(x)
+```
+KNN model:
+```{r}
+set.seed(1)
+ob_KNNmodel <- knn.reg(train =ob_train_KNN , test = ob_test_KNN, y = ob_train_labelsKNN , k = 8)  
+ob_predicted <- ob_KNNmodel$pred
+plot(ob_test_labelsKNN, ob_predicted, xlab="y", ylab=expression(hat(y)))
+ob_errors <- ob_predicted - ob_test_labelsKNN
+ob_rmse <- sqrt(mean((ob_test_labelsKNN-ob_predicted)^2))
+ob_rmse
+ob_rel_change <- abs(ob_errors) / ob_test_labelsKNN
+ob_pred25 <- table(ob_rel_change<0.25)["TRUE"] / nrow(ob_test) 
+ob_pred25
+```
+
+#### Trump KNN model
+
+```{r}
+tr_noncor_norm <- as.data.frame(lapply(tr_noncor, normalize))
+fin_train_labelsKNN <- ob_noncor_norm[,114]
+fin_test_labelsKNN <- tr_noncor_norm[,114]
+fin_train <- ob_noncor_norm[,-114]
+fin_test <- tr_noncor_norm[,-114]
+set.seed(1)
+final_KNNmodel <- knn.reg(train =fin_train , test = fin_test, y = fin_train_labelsKNN , k = 8)  
+final_predicted <- final_KNNmodel$pred
+plot(fin_test_labelsKNN, final_predicted, xlab="y", ylab=expression(hat(y)))
+fin_errors <- final_predicted - fin_test_labelsKNN
+final_rmse <- sqrt(mean((fin_test_labelsKNN-final_predicted)^2))
+final_rmse
+fin_rel_change <- abs(fin_errors) / fin_test_labelsKNN
+fin_pred25 <- table(fin_rel_change<0.25)["TRUE"] / nrow(fin_test) 
+fin_pred25
+
+```
+
+
+# Classification model for question 2 part 2
+
+
+# Data Cleaning for Classification
+```{r stocktickers found in 200+dataset}
+#run this
+nyseticker<-read.csv("nyseticker.csv")
+
+
+nasdaqticker<-read.csv("nasdaqticker.csv")
+
+
+#change names of pricevar column so it is same for all dataframes
+st2002014<-read.csv("2014_Financial_Data.csv")
+colnames(st2002014)[224]<-"NxtYearPriceVar"
+
+st2002015<-read.csv("2015_Financial_Data.csv")
+colnames(st2002015)[224]<-"NxtYearPriceVar"
+
+st2002016<-read.csv("2016_Financial_Data.csv")
+colnames(st2002016)[224]<-"NxtYearPriceVar"
+
+st2002017<-read.csv("2017_Financial_Data.csv")
+colnames(st2002017)[224]<-"NxtYearPriceVar"
+
+st2002018<-read.csv("2018_Financial_Data.csv")
+colnames(st2002018)[224]<-"NxtYearPriceVar"
+unique(st2002014$Sector)
+
+
+obamastocks<-rbind(st2002014,st2002015)
+obamahealthcare<-obamastocks[obamastocks$Sector=="Healthcare", ]
+
+trumpstocks<-rbind(st2002017,st2002018)
+trumphealthcare<-trumpstocks[trumpstocks$Sector=="Healthcare", ]
+
+trumphealthcare$nyselabel<-ifelse(trumphealthcare$X%in%nyseticker$Ticker,1,0)
+trumphealthcare$naslabel<-ifelse(trumphealthcare$X%in%nasdaqticker$Ticker,1,0)
+obamahealthcare$nyselabel<-ifelse(obamahealthcare$X%in%nyseticker$Ticker,1,0)
+obamahealthcare$naslabel<-ifelse(obamahealthcare$X%in%nasdaqticker$Ticker,1,0)
+
+```
+
+
+# Data preperation for Obama dataset
+
+```{r}
+#str(obamahealthcare)
+#get rid of columns that will give feature selection trouble
+obamahealth<-obamahealthcare[,-c(93,112,114,223)]
+```
+
+```{r impute missing values}
+for(i in 1:ncol(obamahealth)) {
+  obamahealth[ , i][is.na(obamahealth[ , i])] <- mean(obamahealth[ , i], na.rm = TRUE)
+}
+#label the dataset in the data cleaning rmd
+#now only pharmaceutical on the stock exchanges are included
+notpharma<-c(which(obamahealth$naslabel==0 & obamahealth$nyselabel==0))
+obamahealth<-obamahealth[-notpharma,]
+sum(is.na(obamahealth))
+```
+```{r correlation and normalization}
+#log everything to normalize dataset, add high constant 
+normfunc<-function(x){
+  (x-min(x))/(max(x)-min(x))
+}
+#include range to not get rid of any columns
+obamahealth[,2:220]<-lapply(obamahealth[,2:220],normfunc)
+numobama<-obamahealth[,2:220]
+ObamaCorMat <- cor(numobama, method = "pearson")  ### only numeric vars
+highlyCorrelated <- findCorrelation(ObamaCorMat, cutoff=0.75)
+obamahealth <- obamahealth[,-highlyCorrelated]
+rownames(obamahealth)<-NULL# to reset index
+
+```
+
+```{r backward selection}
+
+#impute missing values to prevent errors in feature selection
+#normalize the data
+#do correlation analysis first
+#make sure to only run models on numeric values
+set.seed(1)
+full <- lm(Class~.,data=obamahealth)
+stepB <- stepAIC(full, direction= "backward", trace=FALSE)
+summary(stepB)
+
+```
+
+```{r}
+selectedobama<-obamahealth[ ,c(10,14,22,24,27,56,66,85,94,100)]
+#rename class labels for proper glm
+selectedobama$Class<-ifelse(selectedobama$Class==1,"inc","dec")
+selectedobama$Class<-as.factor(selectedobama$Class)
+
+```
+
+```{r}
+set.seed(1)
+sampletrain <- sample(nrow(selectedobama), floor(nrow(selectedobama)*0.7))
+selobtrain <- selectedobama[sampletrain,]#training set with labels
+selobtest <- selectedobama[-sampletrain,]#test set with labels
+selobtrainlabel<-selobtrain[,10]
+selobtestlabel<-selobtest[,10]
+selobtest<-selobtest[,-10]#test set no labels
+```
+
+# prep trump test data
+
+```{r}
+#first run feature selection
+trumphealth<-trumphealthcare[,-c(93,112,114,223)]
+
+```
+
+```{r impute missing values}
+for(i in 1:ncol(trumphealth)) {
+  trumphealth[ , i][is.na(trumphealth[ , i])] <- mean(trumphealth[ , i], na.rm = TRUE)
+}
+#label the dataset in the data cleaning rmd
+#now only pharmaceutical on the stock exchanges are included
+notpharma<-c(which(trumphealth$naslabel==0 & trumphealth$nyselabel==0))
+trumphealth<-trumphealth[-notpharma,]
+sum(is.na(trumphealth))
+```
+
+```{r}
+#normalize dataset
+trumphealth[,2:220]<-lapply(trumphealth[,2:220],normfunc)
+#significant features from obama dataset are only included for the trump dataset
+
+selectedtrumpfromob<-trumphealth[ ,c(41,51,72,76,84,155,168,205,215,221)]
+
+selectedtrumpfromob$Class<-ifelse(selectedtrumpfromob$Class==1,"inc","dec")
+selectedtrumpfromob$Class<-as.factor(selectedtrumpfromob$Class)
+rownames(selectedtrumpfromob)<-NULL #reset index
+
+```
+
+```{r trump features from obama}
+set.seed(1)
+#sampletrain <- sample(nrow(selectedobama), floor(nrow(selectedobama)*0.7))
+fullobtrain <- selectedobama[,]#training set with labels
+fulltrumptest <- selectedtrumpfromob[,]#test set with labels
+fullobamatrainlabel<-fullobtrain[,10]
+fulltrumptestlabel<-fulltrumptest[,10]
+fulltrumptest<-fulltrumptest[,-10]#test set no labels
+```
+
+
+# Ensemble Classification model
+```{r}
+library(caretEnsemble)
+set.seed(1)
+control <- trainControl(method="repeatedcv", number = 10, repeats=5, savePredictions="final", classProbs = TRUE)
+algorithmList <- c('rf', 'svmPoly', 'glm', 'naive_bayes')
+set.seed(1)
+models_selob <- caretList(Class~., data=selobtrain, trControl=control, methodList=algorithmList)
+set.seed(1)
+results_selob <- resamples(models_selob)
+summary(results_selob)
+dotplot(results_selob)  
+modelCor(results_selob)
+
+```
+
+```{r}
+#no model is very correlated but naive bayes has low accuracy so it was removed
+library(caretEnsemble)
+set.seed(1)
+control2 <- trainControl(method="repeatedcv", number = 10, repeats=5, savePredictions="final",classProbs = TRUE)
+algorithmList2 <- c('rf', 'glm', 'svmPoly')
+set.seed(1)
+models_selob2 <- caretList(Class~., data=selobtrain, trControl=control2, methodList=algorithmList2)
+set.seed(1)
+results_selob2 <- resamples(models_selob2)
+summary(results_selob2)
+dotplot(results_selob2)  
+modelCor(results_selob2)
+```
+
+```{r}
+set.seed(1)
+stackControl <- trainControl(method="repeatedcv", number=10, repeats=5, savePredictions=TRUE, classProbs=TRUE)
+set.seed(1)
+selobstack.rf <- caretStack(models_selob2, method="rf", metric="Accuracy", trControl=stackControl)
+print(selobstack.rf)  ##ensemble model
+```
+
+```{r}
+stack.pred <- predict(selobstack.rf , selobtest)
+cf_ensemble_selob <- confusionMatrix(as.factor(stack.pred), as.factor(selobtestlabel) , positive="inc", mode = "everything")
+print(cf_ensemble_selob)
+```
+
+# obama train, trump test 
+
+### Obama model tested with full 2017-2018 data
+```{r 70%obama model with fulltrump test}
+OTstack.pred <- predict(selobstack.rf , fulltrumptest)
+cf_ensemble_OT <- confusionMatrix(as.factor(OTstack.pred), as.factor(fulltrumptestlabel) , positive="inc", mode = "everything")
+print(cf_ensemble_OT)
+```
