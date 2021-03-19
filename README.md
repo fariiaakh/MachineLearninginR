@@ -16,8 +16,7 @@ We experimented with the following Machine Learning Algorithms:
 * Kmeans and Hierarchical Clustering
 * Introductory Text Mining
 
-For Assignment 1 of the course, we covered basic data cleaning, missing value imputations, writing functions in R to filter, mutate and select specific variables
-\
+For Assignment 1 of the course, we covered basic data cleaning, missing value imputations, writing functions in R to filter, mutate and select specific variables <br>
 
 For Assignment 2 of the course, the following libraries were used for analysis:
 * tidyverse, dplyr, lmtest, ggplot2, rcompanion, MASS, and corrplot
