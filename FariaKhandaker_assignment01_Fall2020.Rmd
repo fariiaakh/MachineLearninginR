@@ -1,0 +1,340 @@
+---
+title: 'Applied Data Science Using R - INF 2167H - Assignment #1'
+author: "Faria Khandaker"
+output:
+  pdf_document:
+    latex_engine: lualatex
+  html_document:
+    df_print: paged
+font: 12pt
+Due date: October 14, 2020
+---
+Use RStudio for this assignment. 
+Edit the file `assignment01_Fall2020.Rmd` and insert your R code wherever you see the string "INSERT YOUR ANSWER HERE"
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. 
+To be able to read the questions well, knit the document into word format first.
+
+## Sample Question and Solution
+
+Use `seq()` to create the vector $(1,2,3,...,10)$.
+
+```{r}
+seq(1,10)
+```
+To properly read some questions (ex: question 2), knit the document to word or pdf before you start solving the assignment
+
+## Question 1
+In the following exercises of question 1, use only seq, rep, or c
+
+a) (1.5 points) Create the vector (5, 9, 13, ..., 41). Note that each term in this sequence is of the form 
+1 + 4n where n = 1, ..., 10.
+```{r}
+
+n=1:10
+a<-1+4*n
+c(a)
+
+```
+
+b) (1.5 points) Create the vector (2, 3, 4, ..., 10, 9, 8, ..., 2).
+```{r}
+m=c(seq(2,10),sort(seq(9,2), decreasing = T))
+m
+
+```
+
+
+c) (1.5 points) Create the vector (1,2,3,...,1,2,3) in which the sequence (1,2,3) is repeated 5 times.
+```{r}
+rep(c(1,2,3),5)
+```
+
+
+d) (1.5 points) Create the vector (1,1,...,1,2,2,...,2,3,3,...,3) where each number is repeated 7 times.
+```{r}
+a=1
+b=2
+c=3
+num=c(rep(1,7),rep(2,7),rep(3,7))
+num
+
+```
+
+e) (1.5 points) Create the vector (10,20,20,30,30,30,...,100,...,100) where 10n is repeated n times.
+```{r}
+
+y=1:10
+z<-c(rep(10*y,y))
+
+z
+
+```
+
+
+## Question 2
+
+a) (1.5 points) Compute: $$\sum_{n=1}^{100} n$$
+```{r}
+sum(1:100)
+
+```
+
+
+b) (1.5 points) Compute: $$\sum_{n=1}^{100} n^2$$
+```{r}
+n=seq(100)
+sum(n^2)
+
+```
+
+
+c) (1.5 points) Compute: $$\sum_{n=10}^{20} \left(\frac{2^{n}}{n} + \frac{3^{n}}{n^{3}}\right)$$
+```{r}
+d=seq(10,20)
+sum(((2^d)/d)+((3^d)/d^3))
+
+```
+
+
+d) (1.5 points) Compute: $$\sum_{n=0}^{10} \frac{1}{n!}$$ 
+Hint: Use `factorial(n)` to compute $n!$
+```{r}
+e=seq(10)
+sum(1/factorial(e))
+
+```
+
+
+e) (1.5 points) Compute: $$\sum_{n=1}^{20} \left(2n + \frac{1}{n^2}\right)$$
+```{r}
+f=seq(20)
+sum((2*f)+(1/(f^2)))
+
+```
+
+
+## Question 3
+
+a) (1.5 point) Create an empty list `mylist`.
+```{r}
+mylist<-list()
+mylist
+
+```
+
+
+b) (1.5 points) Add a component named `aa` whose value is 42.
+```{r}
+mylist<-list(mylist,"aa"=42)
+
+
+
+```
+
+
+c) (2.5 points) Add a component named `bb` whose value is the numeric vector $(1,2,\ldots,10)$.
+```{r}
+mylist<-list(mylist,"bb"=c(1:10))
+
+
+```
+
+d) (2 points) Add a component named `cc` whose value is the character vector ("Hello", "INF 2167").
+```{r}
+mylist<-list(mylist, "cc"= c("Hello", "INF 2167"))
+
+```
+
+
+e) (2 points) Add a component named `dd` whose value is a 4x3 matrix whose elements are $(1,2,\ldots,12)$ in column-major order.
+```{r}
+mat <- matrix(1:12, 4, 3)
+mylist<-list(mylist, "dd"= mat)
+
+```
+
+
+f) (0.5 point) Display `mylist` on the screen.
+```{r}
+mylist
+```
+
+
+## Question 4
+
+If you have not already done so, install the ISwR package on
+your computer using the command `install.packages("ISwR")`.
+Note that install.packages causes errors while knitting so make sure after you install the package to hash the command  (i.e. #install.packages("ISWR"))
+
+Loading the `ISwR` package into the current session.
+```{r}
+#install.packages("ISwR")
+library(ISwR)
+
+```
+
+a) (1 points) Display the head of the `thuesen` data frame.
+```{r}
+dataset<-data("thuesen")
+head(thuesen)
+```
+
+
+b) (4 points) Compute the mean of each variable using `sapply()`, removing the missing values.
+```{r}
+
+nomissing <- na.omit(thuesen)
+nomissing$blood.glucose<-as.numeric(nomissing$blood.glucose)
+nomissing$short.velocity<-as.numeric(nomissing$short.velocity)
+sapply(nomissing,function(x) mean(x))
+
+```
+
+
+c) (3 points) Create a numeric vectors `n1`, `n2`, and `n3` whose elements are the integers from 1 to 20, their squares, and their cubes.
+```{r}
+n1=0
+n2=0
+n3=0
+d1=seq(20)
+n1=c(d1)
+n2=c(d1^2)
+n3=c(d1^3)
+```
+
+
+d) (2 points) Create a new data frame `nn` from the above three vectors.
+```{r}
+nn=data.frame(n1,n2,n3)
+```
+
+
+e) (1 points) Display the tail of `nn`.
+```{r}
+tail(nn)
+```
+
+
+f) (4 points) Compute the sum of each variable in `nn` using `sapply`.
+```{r}
+sapply(nn, function(x) sum(x))
+
+```
+
+## Question 5
+
+
+a) (3 points) Create a 4x4 empty matrix, i.e. all elements equal to NA, display mat1. 
+
+```{r}
+mat1<- matrix(NA, 4,4)
+mat1
+
+```
+b) (7 points) fill the middle 4 elements with the values 'This' 'is' 'the' 'middle' and display mat1.
+```{r}
+
+mat1[2,2]<-"This"
+mat1[3,2]<-"is"
+mat1[2,3]<-"the"
+mat1[3,3]<-"middle"
+mat1
+
+```
+c) (10 points) This is the code to write the "This is the middle" row-wise
+```{r}
+
+mat2<- matrix(NA, 4,4)
+mat2[2,2]<-"This"
+mat2[2,3]<-"is"
+mat2[3,2]<-"the"
+mat2[3,3]<-"middle"
+mat2
+```
+
+## Question 6
+Use the tidyverse library
+a) (2 points) Import the dataset WineQuality (4898 rows x12 columns) available in the following website
+http://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-white.csv, note that the type of separator in this dataset = ;
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+winequality<-read.csv("http://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-white.csv", sep = ";")
+
+```
+b) (2 points) Add a column named total.acidity which is the sum of fixed.acidity and volatile.acidity
+Display the head of the new column
+```{r}
+winequality<-mutate(winequality, total.acidity= fixed.acidity+volatile.acidity)
+head(winequality$total.acidity)
+
+```
+c) (4 points) Create a dataframe named bestWine to only include wine of best quality 
+How many cases have wine of best quality?
+A wine of best quality is wine that has highest value in quality
+```{r}
+#max(winequality$quality)
+bestWine<- filter(winequality,winequality$quality >= 9)
+nrow(bestWine)
+```
+d) (4 points) Display the head of bestWine showing only the pH, alcohol, and quality
+```{r}
+head(select(bestWine, pH,alcohol,quality))
+
+```
+e) (5 points) Sort the WineQuality dataset in descending order of alcohol concentration 
+Display only the tail of the alcohol, quality and density 
+```{r}
+sortedWine<-arrange(winequality, desc(winequality$alcohol))
+tail(select(sortedWine, alcohol, quality, density))
+
+```
+f) (5 points) Add a variable to the data frame that takes value 1 if the food has higher citric acid than average, 0 otherwise.Call this variable HighAcid. Do the same for High chlorides, High sugar, and High sulphates. How many cases have both high acid and high chlorides? 
+```{r}
+#calculating the means of sugar, citric acid and sulphates
+avacid<-mean(winequality$citric.acid)
+avchlor<-mean(winequality$chlorides)
+avsug<-mean(winequality$residual.sugar)
+avsul<-mean(winequality$sulphates)
+
+#for high citric acid
+winequality<-mutate(winequality, high.citric.acid= ifelse(citric.acid>avacid,1,0))
+
+#for high chloride
+winequality<-mutate(winequality, high.chloride= ifelse(chlorides>avchlor,1,0))
+
+#for high sugar
+winequality<-mutate(winequality, high.sugar= ifelse(residual.sugar>avsug,1,0))
+
+#for high sulphates
+winequality<-mutate(winequality, high.sulphate= ifelse(sulphates>avsul,1,0))
+
+#high chlorides and high acid
+
+sum(winequality$high.chloride & winequality$high.citric.acid == 1)
+```
+g) (8 points) Create a function called Wine.check to detect bad quality wine. Use the flowchart attached to the assignment as a basis for this function. 
+Hint: Use nested if statement inside the function
+```{r}
+Wine.check <- function(m){
+  ifelse(winequality$high.citric.acid==0, "Pass", ifelse(winequality$high.chloride==0, "Pass",
+                                                         ifelse(winequality$high.sugar==0, "Pass", "Fail")))
+}
+
+```
+
+h) (7 points) Create a new variable called WineCheck using the output of the function. This variable will have values of either "pass" or "Fail". A "Fail" will occur when all acid, chlorides and sugar are high (=1), display the head of WineCheck
+```{r}
+Winecheck<-Wine.check(winequality)
+head(Winecheck)
+
+```
+i) (3 points) How many wines in the WineQuality data frame fail the WineCheck? (8 points)
+```{r}
+winequality<-mutate(winequality, winecheck=Wine.check(winequality1))
+sum(winequality$winecheck=="Fail")
+
+```
+
+END of Assignment #1. Good Luck!
+
