@@ -1,0 +1,747 @@
+---
+title: 'Applied Data Science Using R - INF 2167H - Assignment #3'
+author: "Faria Khandaker"
+date: "12/02/2020"
+output:
+  html_document:
+    always_allow_html: yes
+    df_print: paged
+  pdf_document:
+    latex_engine: lualatex
+    fig_cap: yes
+    keep_tex: yes
+    fig_width: 5
+    fig_height: 3
+header-includes:
+- \usepackage{float}
+- \floatplacement{figure}{H}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. 
+
+```{r message=FALSE, warning=FALSE}
+#Libraries
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(rcompanion)
+library(MASS)
+library(randomForest)
+library(MASS) # stepwise regression
+library(leaps) # all subsets regression
+library(corrplot)
+library(caret)
+library(FNN)
+library(mlbench)
+library(lattice)
+library(class)
+library(gmodels)
+```
+
+## Question 1   (Machine Learning using Linear Regression)
+
+##### 1. Load the Abalone dataset from the "AppliedPredictiveModeling" package
+```{r}
+#install.packages("AppliedPredictiveModeling")
+library(AppliedPredictiveModeling)
+data("abalone")
+
+```
+##### 2. The age of Abalone is the number of rings + 1.5. Use the tidyverse library  to create the dependent variable "age". Display the structure of the dataset after creating the age column and removing the Rings column.
+```{r}
+abalone<- abalone%>%mutate(age=Rings+1.5)
+
+abalone<-abalone[-9]
+
+str(abalone)
+
+```
+##### 3. Use linear regression to train a model to predict abalone age from the abalone dataset (the one you updated in the previous question through creating age and removing rings). Create train and test sets in the ratio of 60:40. Set your seed to 123 for this question and from now on every time you set a seed in this assignment set it to 123. Display the summary of the model and interpret the coefficients and p-values of Type and ShuckedWeight variables. 
+```{r}
+#Type is a categorical variable consisting of female (considered the reference type), male, and infant(according to a Google search about the dataset). Shucked weight is the weight of the meat. The coefficients for the three variables shown in the summary table are all statistically significant because the p-values are all under 0.05. The coefficient for Type I or infant is -2.29 which mean that compared to females and which all other variables remaining constant, the age of the abalone is likely to decrease by 2.29 "units" for every 1 'unit' increase in type I. In other words, compared to females, infants are considered younger. And interpreting Type M in the same way, male abalones are usually younger than female abalones. 
+
+#For ShuckedWeight, every 1 unit increase in ShuckedWeight, or the weight of the meat, increases age by 3.88 units. So the older the abalone is, the more meat it is likely to have on it
+
+set.seed(123)
+#to get random indices
+q1training<-sample(nrow(abalone),as.integer(nrow(abalone)*0.60))
+
+q1train = abalone[q1training,]      ### training dataset, certain rows, all the columns 
+q1test = abalone[-q1training,]      ### test dataset
+
+agemodel<-lm(age~Type+ShuckedWeight, data = q1train)
+summary(agemodel)
+
+```
+##### 4. Predict the model, calculate the errors and the rmse. Interpret the model prediction. 
+```{r}
+#The root mean square error is calculated to be around 2.8 which means the predictions of the model are off by +/- 2.8. So the predicted ages are sometimes 2.8 years above or below the actual age. Calculating for relative change within values, it is found that 74.25% of the values predicted are within 25% of the actual value. When the errors are plotted in the form of a histogram, they are found have left skew with the range of the errors being from negative 10 to six with most of the error concentrating between negative two and positive two. The left skew of errors indicates that abalone age in this dataset does not follow a normal distribution.
+
+agepred<- predict(agemodel,q1test)
+q1errors <- agepred - q1test$age
+q1rmse <- sqrt(mean((q1test$age - agepred)^2))
+hist(q1errors)
+q1rmse
+q1rel_change <- abs(q1errors) / q1test$age
+q1pred25 <- table(q1rel_change<0.25)["TRUE"] / nrow(q1test) 
+q1pred25
+
+```
+
+##Question 2 (Feature Selection) 
+##### Use three methods of feature selection, name them and determine the best features to predict age of the abalone dataset. Use the same abalone dataset for which you created the age variable and removed rings.  
+
+Method 1: Forward Selection    
+```{r}
+fullaba <- lm(age~., data= abalone)  ## . means all the IVs
+nullaba <- lm(age~1,data=abalone)
+forward <- stepAIC(nullaba, scope=list(lower=nullaba, upper=fullaba), direction= "forward", trace=FALSE)
+summary(forward) 
+
+```
+Method 2: Backward Selection    
+```{r}
+backward <- stepAIC(fullaba, direction= "backward", trace=FALSE)
+summary(backward)
+```
+Method 3: Stepwise Selection   
+```{r}
+stepwise<-stepAIC(forward, direction="both", trace=FALSE)
+summary(stepwise)
+```
+
+##### 2. Determine computationally in two different ways which is the most important feature. 
+
+Method 1: NVMAX
+```{r}
+# the most important feature shown through NVMAX is shell weight
+subsets<-regsubsets(age~.,data=abalone, nbest=1,nvmax=3)   #nvmax is the number of attributes
+sub.sum <- summary(subsets)
+as.data.frame(sub.sum$outmat)
+```
+Method 2: Random Forest 
+```{r}
+#importance tells you which variables have the most weight in estimating the target variable. Type is not there after feature selection
+
+#install.packages("randomForest")
+library(randomForest)
+set.seed((123))
+fullaba=randomForest(age~., data=abalone, ntree=500)
+importance    <- importance(fullaba)
+varImportance <- data.frame(Variables = row.names(importance),Importance = importance[ ,'IncNodePurity'])
+x <- filter(varImportance, Importance>1500)   #keep only variables with importance >10
+age <- abalone$age
+features <- as.character(x$Variables)
+cleanabalone <- cbind(age, abalone[,features])
+```
+
+##Question 3 (Machine learning using KNN on a numeric dataset)
+##### For this question, you will also use the abalone dataset for which you created the dependent variable age and removed rings in question 1. 
+
+##### 1. Train a KNN model on the abalone dataset using a train/test ratio of 70-30 and a k of 5. Use all the variables in the abalone dataset to create the model.
+```{r}
+abalone.numeric <- sapply( abalone[,2:9], as.numeric) #KNN only runs on numeric
+set.seed(123)
+q3trainindex <- sample(nrow(abalone.numeric), floor(nrow(abalone.numeric)*0.7))  #create train and test data sets
+q3train <- abalone.numeric[q3trainindex,]  
+q3test <- abalone.numeric[-q3trainindex,]
+q3train_labelsKNN <- q3train[,8]   ##DV in the training set
+q3test_labelsKNN <- q3test[,8]     ##DV in the test set
+q3train_KNN <- q3train[,-8]   ##Only keep IV in the training set
+q3test_KNN <- q3test[,-8]     ##Only keep IV in the test set
+set.seed(123)
+q3KNNmodel <- knn.reg(train = q3train_KNN , test = q3test_KNN, y = q3train_labelsKNN , k = 5)
+
+```
+
+
+##### 2. Calculate the performance measures of the KNN model you created in question 1 and interpret the performance measures
+```{r}
+#the root mean square error for the KNN model predicting age of an abalone is 2.22. This means the predicted age and actual age is off by approximately 2.22 years. Considering that there are over 4000 entries in this dataset, a RMSE of 2.22 is can be considered a good score.  The plotted graph which shows the predicted labels versus actual test labels have fairly overlapping results. This indicates that our model is fairly good at predicting the age of abalone. A relative change percentage of 0.85 tells us that 86% of the time, the age prediction falls within 25% (higher or lower) of the real age. The RMSE  may be lower (which could lead to better relative change scores)if the dataset is normalized and run through the model again. 
+
+set.seed(123)
+q3predicted <- q3KNNmodel$pred
+plot(q3test_labelsKNN, q3predicted, xlab="y", ylab=expression(hat(y)))
+q3errors <- q3predicted - q3test_labelsKNN
+q3rmse <- sqrt(mean((q3test_labelsKNN-q3predicted)^2))
+q3rmse
+q3rel_change <- abs(q3errors) / q3test_labelsKNN
+q3pred25 <- table(q3rel_change<0.25)["TRUE"] / nrow(q3test) 
+q3pred25
+```
+##### 3. Find the best value of K. Rerun the model and calculate its performance with the new k (if different from the original k=5)  
+```{r}
+# this tells me that the best k is 13. I should re-run the model with k being 13
+
+x <- 0
+for (i in 1:sqrt(nrow(q3train)))   #try 1:11 to see the elbow clearly
+{
+set.seed(123)
+KNNmodel <- knn.reg(train = q3train_KNN , test = q3test_KNN, y = q3train_labelsKNN, k = i)  
+predicted <- KNNmodel$pred
+rmse <- sqrt(mean((q3test_labelsKNN-predicted)^2))
+x[i] <- rmse
+}
+plot(x, type="l", col="red")
+which.min(x) 
+```
+
+```{r}
+#After finding the best k to be 13 and using it to retrain the model, the performance of the model increased. The root mean square was found to be 2.11, which is a decrease of 0.11 units. The relative change of the values also changed from 86% to 87%.
+
+set.seed(123)
+q3KNNmodel2 <- knn.reg(train = q3train_KNN , test = q3test_KNN, y = q3train_labelsKNN , k = 13)
+q3predicted2 <- q3KNNmodel2$pred
+plot(q3test_labelsKNN, predicted, xlab="y", ylab=expression(hat(y)))
+q3errors2 <- q3predicted2 - q3test_labelsKNN
+q3rmse2 <- sqrt(mean((q3test_labelsKNN-q3predicted2)^2))
+q3rmse2
+q3rel_change2 <- abs(q3errors2) / q3test_labelsKNN
+q3pred252 <- table(q3rel_change2<0.25)["TRUE"] / nrow(q3test) 
+q3pred252
+```
+## Question 4 (Correlation) 
+##### Remove highly correlated (>=0.6) independent variables from the wine quality dataset. This is a dataset where wine quality is predicted from wine composition. 
+
+Import the dataset from 
+http://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-white.csv
+```{r}
+wine<-read.csv("http://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-white.csv ",sep = ";")
+
+```
+##### 1. Display the correlation matrix and plot.
+```{r}
+#This is the correlation matrix
+cormat<- cor(wine, method = "pearson") 
+cormat   # a 6x6 matrix  
+
+#This is the correlation plot
+col <- colorRampPalette(c("#FFFFCC","#C7E9B4","#7FCDBB","#40B6C4","#2C7FB8" ,"#253494"))
+corrplot(cormat, method="color", col=col(200),   
+         type="upper", order="hclust", 
+         tl.col="black", tl.srt=45, tl.cex= 0.7, #Text label color and rotation
+         # Combine with significance
+         sig.level = 0.01, 
+         # hide correlation coefficient on the principal diagonal
+         diag=FALSE
+)
+```
+
+
+##### 2. Interpret the correlation between alcohol and density, and between sulphates and free sulphur dioxide
+
+```{r}
+#Interpreting correlation between alcohol and density, and between sulphates and free sulphur dioxide
+cormat2<- wine[,c(6,8,10,11)]
+correlationMatrix2 <- cor(cormat2, method = "pearson") 
+correlationMatrix2
+
+#There is a strong negative correlation between alcohol and density and a very weak positive correlation between sulphates and free sulfur dioxide
+
+```
+
+##### 3. Remove highly correlated variables.How many independent variables are left in the dataset? which variables were removed?
+```{r}
+#there are 9 independent variables left in the dataset.
+# the variables of density and total sulfur dioxide were removed
+#Remove highly correlated
+highlyCorrelated <- findCorrelation(cormat, cutoff = 0.6)
+winenoncor <- wine[,-highlyCorrelated]  #keep only those not highly correlated
+
+correlationMatrix2 <- cor(winenoncor, method = "pearson")  ### only numeric vars
+correlationMatrix2
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corrplot(correlationMatrix2, method="square", col=col(200),   
+         type="upper", order="hclust", 
+         tl.col="black", tl.srt=45, tl.cex= 0.7, #Text label color and rotation
+         sig.level = 0.01, 
+         diag=TRUE
+)
+
+```
+
+## Question 5 (KNN classifier)
+##### Reduce the levels of rating for wine quality to three levels as high, medium and low.
+##### Consider high quality wine is >=7, and low quality wine is <=4. Then, build a KNN classifier (75:25 train:test ratio) for the Wine dataset after normalizing it and choosing the best K (avoiding k=1). 
+
+```{r}
+#winenoncor is the dataset with highly correlated variables removed
+winequal <- function(x){
+  ifelse(wine$quality>=7, "high", ifelse(wine$quality <=4, "low", "medium"))
+}
+winenoncor$quality<-winequal(winenoncor)
+winenoncor$quality<-as.factor(winenoncor$quality)
+
+#normalize dataset:
+normalize <- function(x) {
+  return ((x - min(x)) / (max(x) - min(x)))
+}
+#normalizing the dataset,including only the numerical features
+winenormal <- sapply(winenoncor[,1:9], normalize) 
+```
+
+```{r}
+#training test from different dataset, labels from different dataset
+set.seed(123)
+rn_train <- sample(nrow(winenoncor), floor(nrow(winenoncor)*0.75))  
+#create train and test data sets, normalized dataset doesn't contain labels
+train <- winenormal[rn_train,]  
+test <- winenormal[-rn_train,]
+train4label<-winenoncor[rn_train,10]
+test4label<-winenoncor[-rn_train,10]
+
+#i couldn't figure out how to create a for loop to plot accuracy vs the number of k.
+#looking online, i was able to use the caret library and the knn method for the train function
+set.seed(123)
+model <- train(
+  quality ~., data = winenoncor, method = "knn",
+  trControl = trainControl("cv", number = 10),
+  preProcess = c("center","scale"),
+  tuneLength = 20
+  )
+plot(model)
+model$bestTune
+#the parameter bestTune gave me best k as 5.
+
+#This is the KNN classifier with the best k which is 5
+set.seed(123)
+q5model<-knn(train =train , test = test, cl = train4label , k = 5)
+crosstab<-CrossTable(x=test4label, y=q5model, prop.chisq=FALSE)
+
+```
+
+
+##### Display all performance measures of the KNN classifier. What can you tell about the prediction of different categories of wine quality? Interpret why you got these results? 
+```{r}
+totalmed<-sum(winenoncor$quality=='medium')
+totallow<-sum(winenoncor$quality=='low')
+totalhigh<-sum(winenoncor$quality=='high')
+totalwines<-nrow(winenoncor)
+
+#This is the function that sums the true positives and all the values in the confusion matrix to provide the accuracy of the model
+q5accuracy <- function(x){sum(diag(x$t))/(sum(x$t)) * 100}
+q5accuracy(crosstab)
+
+#recall is tp/tp+fn. This means 
+#This function extracts the value for each label which was obtained by dividing the true positive by the row total
+q5recall<-diag(crosstab$prop.row)
+
+#precision is tp/tp+fp.
+#This function extracts the value for each label which was obtained by dividing the true positive by the column total
+q5precision<-diag(crosstab$prop.col)
+
+#f1 score, which is the balance between precision and recall is 2(precision x recall/precisiont+recall)
+q5f1<-2*((q5recall*q5precision)/(q5recall+q5precision))
+
+#According to the crosstable the column total(FP) for high=101, for medium=175 and for low=4
+#According to the crosstable, the row total(FN) for high=144, for medium=101 and for low=35
+
+#the accuracy of the model with k=5 is 77.14%.
+#The Precision for each label is: high=0.54 , medium=0.825 , low=0.5 
+#The Recall for each label is:  high= 0.455, medium=0.89 , low= 0.103
+#The F1 score for each label is: high=0.495 , medium= 0.86, low=0.17
+
+
+#The KNN model overall has an accuracy of 77.17% so it can predict the correct quality of wine 77% of the time.The medium quality wines have the best performance measures for all three scores.  The low quality wines have the worst measures of all, for all three scores. With a model accuracy of 77.14 percent and the low number of observations(183 out of 4898 total wines) for low quality wine, it makes sense that the performance measures are so low. Medium quality wine has the most number of observations at a total of 3655 and if we follow the same pattern as low quality wines, it makes sense that they have the higher performance measures has the model has more examples to train on for medium quality wines.
+
+```
+
+## Question 6 (ML classifiers and ensemble models) 
+
+##### 1.Use the wine dataset consider wine of quality less than or equal to 5 as low and greater than five as high. 
+
+```{r}
+#Read the dataset
+q6wine<-read.csv("http://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-white.csv ",sep = ";")
+# label wine quality as high or low
+q6winequal <- function(x){
+  ifelse(q6wine$quality>=5, "high", "low")
+}
+q6wine$quality<-q6winequal(q6wine)
+# i asked Deena and she said i didn't have to normalize or get rid of correlating variables for this question.
+```
+##### 2.Build individual classifiers of random forest, support vector machines, Naive Bayes and logistic regression. Consider you are interested in whether the model correctly predicts high wine quality.  Calculate performance measures and decide which is the best model. Use 70:30 training:test ratio and seed of 123. Use 3 repeats of 10-fold cross-validation. 
+
+```{r}
+#The random forest model has the highest accuracy in predicting wine quality at 96.87% so it is the best performing model out of all tested models. RF model has 97.25% precision (or how correctly the model is able to identify the wine quality ), 99.58% recall(or how correctly the model is able to retrieve each wine label) and an F1 score (the balance between precision and recall) of 98.4%.  Below all the models and their performance measures can be found.
+
+```
+
+
+```{r}
+#Building training/test sets
+set.seed(123)
+q6wine_train <- sample(nrow(q6wine), floor(nrow(q6wine)*0.7))
+q6train <- q6wine[q6wine_train,]#training set with labels
+q6test <- q6wine[-q6wine_train,]#test set with labels
+q6trainlabel<-q6train[,12]
+q6testlabel<-q6test[,12]
+q6test<-q6test[,-12]#test set no labels
+```
+
+Random Forest
+```{r}
+ctrl <- trainControl(method="repeatedcv", number =10, repeats=3)  #cross-validation
+set.seed(123)
+
+q6RFmodel_wine <- train(quality ~ ., data= q6train, method="rf", ntree=500, trControl = ctrl)
+testpredRF_wine <- predict(q6RFmodel_wine, q6test)#takes the model and the test data
+cf_RF_wine <- confusionMatrix(as.factor(testpredRF_wine), as.factor(q6testlabel),mode = "everything")
+print(cf_RF_wine)
+
+```
+Support Vector Machines
+```{r}
+set.seed(123)
+q6SVMmodel_wine <- train(quality ~ ., data= q6train, method="svmPoly", trControl = ctrl)
+test_predSVM_wine <- predict(q6SVMmodel_wine, q6test)
+cf_SVM_wine <- confusionMatrix(as.factor(test_predSVM_wine), as.factor(q6testlabel), mode = "everything")
+print(cf_SVM_wine)
+```
+Naive Bayes
+```{r}
+set.seed(123)
+q6NBmodel_wine <- train(quality ~ ., data= q6train, method="naive_bayes", trControl = ctrl)
+test_predNB_wine <- predict(q6NBmodel_wine, q6test)
+cf_NB_wine <- confusionMatrix(as.factor(test_predNB_wine), as.factor(q6testlabel),mode = "everything")
+print(cf_NB_wine)
+```
+Logistic Regression
+```{r}
+set.seed(123)
+LRmodel_wine <- train(quality ~ ., data= q6train, method="glm", trControl = ctrl)
+test_predLR_wine <- predict(LRmodel_wine, q6test)
+cf_LR_wine <- confusionMatrix(as.factor(test_predLR_wine), as.factor(q6testlabel),mode = "everything")
+print(cf_LR_wine)
+```
+##### 3. Build an ensemble model of all the previous models and calculate and interpret its performance measures.  
+```{r}
+#Below are the performance measures for the ensemble model. All models have very high accuracy scores (all within 90%). After creating an the first ensemble and checking for model correlations, it was found that Random Forest and Naive bayes had higher correlation than other models and since Naive Bayes had a slightly lower accuracy than Random Forest (RF=96.6% vs NB=95.5%), Naive Bayes was taken out and another ensemble model was trained.
+
+#The Ensemble model contained SVM, RF and GLM. It had an accuracy score of 96.73% which is only slightly higher(0.13% higher) than the RF model by itself . The ensemble model performed better in predicting wine quality than any single model alone.
+
+```
+
+```{r}
+library(caretEnsemble)
+control <- trainControl(method="repeatedcv", number = 10, repeats=3, savePredictions="final", classProbs = TRUE)
+algorithmList <- c('rf', 'svmPoly', 'glm', 'naive_bayes')
+set.seed(123)
+models_wine <- caretList(quality~., data=q6train, trControl=control, methodList=algorithmList)
+set.seed(123)
+results_wine <- resamples(models_wine)
+summary(results_wine)
+dotplot(results_wine)  
+modelCor(results_wine)
+
+```
+
+Taking out Naive Bayes and rerunning ensemble model with rest of the algorithms
+```{r}
+library(caretEnsemble)
+control <- trainControl(method="repeatedcv", number = 10, repeats=3, savePredictions="final", classProbs = TRUE)
+algorithmList2 <- c('rf', 'svmPoly', 'glm')
+set.seed(123)
+models_wine2 <- caretList(quality~., data=q6train, trControl=control, methodList=algorithmList2)
+set.seed(123)
+results_wine2 <- resamples(models_wine2)
+summary(results_wine2)
+dotplot(results_wine2)  
+modelCor(results_wine2)
+```
+```{r}
+stackControl <- trainControl(method="repeatedcv", number=10, repeats=5, savePredictions=TRUE, classProbs=TRUE)
+set.seed(123)
+winestack.rf <- caretStack(models_wine2, method="rf", metric="Accuracy", trControl=stackControl)
+print(winestack.rf)  ##ensemble model
+
+```
+
+```{r}
+winestack.pred <- predict(winestack.rf , q6test)
+cf_ensemble_wine <- confusionMatrix(as.factor(winestack.pred), as.factor(q6testlabel) , positive="high", mode = "everything")
+print(cf_ensemble_wine)
+
+```
+
+
+## Question 7
+
+##### 1.Use the USDA dataset. Consider calories less than 200 as low, and 200 and more as high. 
+```{r}
+USDA<-read.csv(file.choose())
+caloriefactor<- function(x){ ifelse(USDA$Calories<200,"low","high")
+}
+
+USDA$Calories<-caloriefactor(USDA)
+```
+
+##### 2.Build individual classifiers of random forest, support vector machines, Naive Bayes and logistic regression. Consider you are interested in whether the model correctly predicts high calories.  Calculate performance measures and decide which is the best model. Use 70:30 training:test ratio and seed of 123. Use 3 repeats of 5-fold cross-validation. 
+
+```{r}
+#Below are the performance measures for the models. 
+#Based on the results of the models, Logistic regression is the best algorithm to classify high versus low calories. It has an accuracy of 98.78% with a confidence interval between 0.9817-0.9923, precision of 98.47%, recall of 99% and an f1 score of 98.74%. It may seem as if the model is overfitting but these metrics are the results of feeding the model with test data. This means the Logistic regression model is performing very well.
+```
+
+Creating Training/Test set
+```{r}
+set.seed(123)
+q7usda_train <- sample(nrow(USDA), floor(nrow(USDA)*0.7))
+q7train <- USDA[q7usda_train,]#training set with labels
+q7test <- USDA[-q7usda_train,]#test set with labels
+q7trainlabel<-q7train[,1]
+q7testlabel<-q7test[,1]
+q7test<-q7test[,-1]#test set no labels
+```
+
+Random Forest
+```{r}
+ctrl <- trainControl(method="repeatedcv", number=5, repeats=3)  #cross-validation
+set.seed(123)
+
+q7RFmodel_usda <- train(Calories ~ ., data= q7train, method="rf", ntree=500, trControl = ctrl)
+testpredRF_usda <- predict(q7RFmodel_usda, q7test)#takes the model and the test data
+cf_RF_usda <- confusionMatrix(as.factor(testpredRF_usda), as.factor(q7testlabel),mode = "everything")
+print(cf_RF_usda)
+
+```
+Support Vector Machine
+```{r}
+set.seed(123)
+q7SVMmodel_usda <- train(Calories ~ ., data= q7train, method="svmPoly", trControl = ctrl)
+test_predSVM_usda <- predict(q7SVMmodel_usda, q7test)
+cf_SVM_usda <- confusionMatrix(as.factor(test_predSVM_usda), as.factor(q7testlabel), mode = "everything")
+print(cf_SVM_usda)
+```
+Naive Bayes
+```{r}
+set.seed(123)
+q7NBmodel_usda <- train(Calories ~ ., data= q7train, method="naive_bayes", trControl = ctrl)
+test_predNB_usda <- predict(q7NBmodel_usda, q7test)
+cf_NB_usda <- confusionMatrix(as.factor(test_predNB_usda), as.factor(q7testlabel),mode = "everything")
+print(cf_NB_usda)
+```
+Logistic Regression
+```{r}
+set.seed(123)
+LRmodel_usda <- train(Calories ~ ., data= q7train, method="glm", trControl = ctrl)
+test_predLR_usda <- predict(LRmodel_usda, q7test)
+cf_LR_usda <- confusionMatrix(as.factor(test_predLR_usda), as.factor(q7testlabel),mode = "everything")
+print(cf_LR_usda)
+
+```
+
+##### 3. Build an ensemble model of all the previous models and calculate and interpret its performance measures. 
+```{r}
+#Below are the ensemble models. There were 2 ensemble models that were ran. After running the first one, it was shown that the models Support Vector Machines and Logistic Regression had a high correlation at 94%. 
+#SVM has lower accuracy than Logistic regression (SVM accuracy=98.17%, GLM accuracy=98.4%) and therefore another ensemble model was created without it
+#The second Ensemble model contained NB, RF and GLM. It had an accuracy score of 98.9% which is only slightly higher than the GLM model by itself (0.5% higher). The ensemble model performed better in predicting high and low calories than any single model alone.
+```
+
+Ensemble Model
+```{r}
+library(caretEnsemble)
+control2 <- trainControl(method="repeatedcv", number = 5, repeats=3, savePredictions="final", classProbs = TRUE)
+algorithmList <- c('rf', 'svmPoly', 'glm', 'naive_bayes')
+set.seed(123)
+models_usda <- caretList(Calories~., data=q7train, trControl=control2, methodList=algorithmList)
+set.seed(123)
+results_usda <- resamples(models_usda)
+summary(results_usda)
+dotplot(results_usda)  
+modelCor(results_usda)
+```
+
+```{r}
+library(caretEnsemble)
+control2 <- trainControl(method="repeatedcv", number = 5, repeats=3, savePredictions="final",classProbs = TRUE)
+algorithmListq7 <- c('rf', 'glm', 'naive_bayes')
+set.seed(123)
+models_usda2 <- caretList(Calories~., data=q7train, trControl=control2, methodList=algorithmListq7)
+set.seed(123)
+results_usda2 <- resamples(models_usda2)
+summary(results_usda2)
+dotplot(results_usda2)  
+modelCor(results_usda2)
+```
+
+```{r}
+stackControl2 <- trainControl(method="repeatedcv", number=10, repeats=3, savePredictions=TRUE, classProbs=TRUE)
+set.seed(123)
+usdastack.rf <- caretStack(models_usda2, method="rf", metric="Accuracy", trControl=stackControl2)
+print(usdastack.rf)  ##ensemble model
+```
+
+```{r}
+stack.pred2 <- predict(usdastack.rf , q7test)
+cf_ensemble_usda <- confusionMatrix(as.factor(stack.pred2), as.factor(q7testlabel) , positive="high", mode = "everything")
+print(cf_ensemble_usda)
+```
+
+## Question 8 (Kmeans clustering)
+
+##### 1.Apply a kmeans clustering to the geyser dataset "faithful" embedded in R. What is the best value of k to cluster this dataset? Interpret how did you determine this value? What is the compactness of the kmeans clustering?
+```{r}
+#The best value of k for this dataset was found to be three as the largest decrease of the within sum of squares was seen to be between 2 and 3. The within sums of squares is a metric that shows how dissimilar are the members of a cluster are. The more dissimilar they are, the less compact they are. Kmeans clustering aims to minimize the differences within the cluster and maximize the differences between the clusters.The compactness of the clusters is 89.7; this means the members of a cluster are 89.7% similar to each other.
+
+
+data<-faithful
+
+kmeans(data, centers = 3, nstart = 20) 
+wssplot <- function(data, nc, seed=123){
+               wss <- (nrow(data)-1)*sum(apply(data,2,var))  
+               for (i in 2:nc){  #at least 2 clusters
+                    set.seed(seed)
+                    wss[i] <- sum(kmeans(data, centers=i)$withinss)}
+                plot(1:nc, wss, type="b", xlab="Number of groups",
+                     ylab="Sum of squares within a group")
+                }
+
+
+wssplot(data, nc = 20)
+```
+##### 2. Plot the original faithful dataset (eruptions on the x-axis vs waiting on the y-axis). From the plot, can you explain why did you get the best value of K that you got in question 1?
+```{r}
+plot(data)
+# after plotting the data, it can be seen that the data can be clustered into 2 large groups and upon closer inspection, the largest group can infact be divided into 2 clusters for a total of 3. This explains why the best k value was found to be 3.
+```
+##### 3. Validate your clustering and interpret the results of your validation 
+```{r}
+datacluster<-kmeans(data, centers = 3, nstart = 20)
+clusterlabels<-table(data$eruptions, datacluster$cluster)
+library(cluster)
+library(factoextra)
+
+sil <- silhouette(datacluster$cluster, dist(data)) 
+fviz_silhouette(sil)
+# This dataset has 2 columns eruptions and waiting. Both are measured in minutes and provide information on the duration of both events respectively. Therefore no legible label for each cluster exists. Based on the visualization below, we can see that the third  cluster has the best silhouette width.  The closer the Si coefficient is to one, the more intracluster similarity.There are some points negative silhouette widths
+```
+##### 4. Find trends in the dataset. Based on these trends, which varibale (eruptions or waiting) is a better variable to divide the dataset into categories? What will be the cutpoints at which the clusters are drawn? Interpret you answer.
+```{r}
+library(GGally)   ## extension to ggplot
+#install.packages("plotly")
+library(plotly)
+#adding the clusters to the faithful dataset
+data$cluster <- as.factor(datacluster$cluster)
+
+ggplot(data, aes(x=eruptions, y = waiting, color = as.factor(datacluster$cluster))) + geom_point()
+ggplot(data, aes(x=waiting, y = eruptions, color = as.factor(datacluster$cluster))) + geom_point()
+
+
+p <- ggparcoord(data = data, columns = c(1:2), groupColumn = "cluster", scale = "std") + labs(x = "Flower features", y = "value (in standard-deviation units)", title = "Clustering")
+ggplotly(p)
+
+#Based on the scatterplots, it is better to divide the dataset by waiting time
+#There is a general trend showing that the longer the waiting time, the more eruptions that take place. there are outlier present but this is the general trend.
+#Some of the cutpoints to appropriately determine clusters are waiting times of  65 and 80 minutes.
+```
+
+## Question 9 (Text analytics)
+##### For this question, we will do text and sentiment analysis of Martin Luther King's speech "I have a dream". The speech is available on Quercus in file "Dream_Speech.docx"
+
+##### 1. Draw 20 most frequent words in Martin Luther King's speech "I have a dream" and show their counts? 
+```{r}
+library(tidytext)
+library(sentimentr)
+library(readtext)
+library(tidyverse)
+library(stringr)
+dream<-readtext(paste0(file.choose()))
+tidydream <- unnest_tokens(dream,word,text)
+tidyfiltered1 <- filter(tidydream,!tidydream$word %in% stop_words$word) 
+tidyfiltered2 <- filter(tidyfiltered1,!tidyfiltered1$word %in% stop_words$word) 
+
+library(ggplot2)
+tidyfiltered2 %>%
+  count(word, sort = TRUE) %>%
+  top_n(15) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n)) +
+  geom_col() +
+  coord_flip() +
+  labs(x = "Count",
+       y = "Unique words",
+       title = "Count of unique words found in text")
+
+
+```
+
+##### 2. What are the 20 most common bigrams. Show their counts. 
+```{r}
+dreambigrams <- dream %>%
+    unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
+    separate(bigram, c("word1", "word2"), sep = " ") %>%
+    filter(!word1 %in% stop_words$word) %>%
+    filter(!word2 %in% stop_words$word) %>%
+    na.omit() %>%
+    count(word1, word2, sort = TRUE)
+head(dreambigrams,20L)
+```
+
+##### 3. Do a sentiment analysis of the speech using a chart of nrc lexicon. 
+```{r}
+#install.packages("readtext")
+library(readtext)
+library(tidyverse)
+library(tidytext)
+library(stringr)
+
+
+dreamtokens <- tidyfiltered2
+
+dreamtokens %>%
+  inner_join(get_sentiments("nrc")) %>% # pull out only sentiment words
+  count(sentiment) %>% # count the # of positive & negative words
+  spread(sentiment, n, fill = 0) %>% # made data wide rather than narrow
+  mutate(sentiment = positive - negative) # # of positive words - # of negative words
+
+dreamnrc_senti <- get_sentiments("nrc")
+dreamsenti <- inner_join(dreamtokens, dreamnrc_senti) 
+dreamcount_senti <- dreamsenti %>% group_by(sentiment) %>% tally()
+
+barplot(100*dreamcount_senti$n/sum(dreamcount_senti$n),
+        names.arg = dreamcount_senti$sentiment,
+        las=2,  #vertical orientation of text
+        cex.names = 0.8,
+        col=rainbow(10),
+        ylab='Percentage',
+        main= 'Sentiment Scores for Dream Speech')
+
+```
+##### 4. What are the four most common sentiments? Display them with their counts.
+```{r}
+#The four most common sentiments are positive, trust, negative, joy.
+ordered<-dreamcount_senti[order(-dreamcount_senti$n),c(1,2)]
+head(ordered,4)
+```
+##### 5. Find the top six words associated with each of the 4 sentiments you identified in the previous question. Why do you think these four sentiments are most common?
+```{r}
+dreamword_proportions <- count(dreamsenti,word,sentiment)
+dreamword_proportions <- group_by(dreamword_proportions,n)
+dreampositive<-dreamword_proportions[dreamword_proportions$sentiment=="positive",]
+dreamtrust<-dreamword_proportions[dreamword_proportions$sentiment=="trust",]
+dreamanticipation<-dreamword_proportions[dreamword_proportions$sentiment=="anticipation",]
+dreamnegative<-dreamword_proportions[dreamword_proportions$sentiment=="negative",]
+
+DreamPosOrdered<-dreampositive[order(-dreampositive$n),c(1,2,3)]
+DreamNegOrdered<-dreamnegative[order(-dreamnegative$n),c(1,2,3)]
+DreamTrustOrdered<-dreamtrust[order(-dreamtrust$n),c(1,2,3)]
+DreamAnticipationOrdered<-dreamanticipation[order(-dreamanticipation$n),c(1,2,3)]
+
+#Top 6 words associated with Positive Sentiment
+head(DreamPosOrdered,6)
+#Top 6 words associated with Trust Sentiment
+head(DreamTrustOrdered,6)
+#Top 6 words associated with Anticipation Sentiment
+head(DreamAnticipationOrdered,6)
+#Top 6 words associated with Negative Sentiment
+head(DreamNegOrdered,6)
+```
